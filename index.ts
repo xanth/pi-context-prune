@@ -188,9 +188,6 @@ export default function (pi: ExtensionAPI) {
     let sessionManager: SessionAppender | undefined;
     if (delivery === "session") {
       try {
-        // SAFETY: pi's ExtensionContext exposes the SessionManager untyped from this
-        // package's perspective; it structurally satisfies SessionAppender
-        // (appendCustomEntry / appendCustomMessageEntry) in all pi versions we target.
         sessionManager = ctx.sessionManager as unknown as SessionAppender;
       } catch (err) {
         restoreBatches(batches);

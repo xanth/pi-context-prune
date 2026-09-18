@@ -32,7 +32,10 @@ assert.deepEqual(packageJson.pi?.extensions, ["./dist/index.js"]);
 assert.equal(packResultList.length, 1, "expected one npm pack result");
 
 const publishedFiles = new Set(packResultList[0].files.map(({ path }) => path));
-assert(publishedFiles.has("dist/index.js"), "dist/index.js is missing from the package");
+assert(
+  publishedFiles.has("dist/index.js"),
+  "dist/index.js is missing from the package",
+);
 assert(
   publishedFiles.has("dist/index.js.map"),
   "dist/index.js.map is missing from the package",
@@ -43,4 +46,6 @@ assert(
   "src/ TypeScript sources must not be published",
 );
 
-console.log("Package check passed: compiled output is included and TypeScript sources are excluded.");
+console.log(
+  "Package check passed: compiled output is included and TypeScript sources are excluded.",
+);
