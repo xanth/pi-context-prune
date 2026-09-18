@@ -391,6 +391,12 @@ export interface SummarizeBatchOptions {
    * batch is treated as aborted (not a summarizer failure).
    */
   signal?: AbortSignal;
+  /**
+   * Maximum allowed summary character count. If the incoming summary exceeds
+   * this threshold while streaming, the stream is aborted early and marked as
+   * oversized. Defaults to the total raw character count of the batch tool calls.
+   */
+  maxChars?: number;
 }
 
 /** Options for summarizeBatches() when callers want live per-batch text progress. */
@@ -402,6 +408,11 @@ export interface SummarizeBatchesOptions {
    * When fired, all in-flight stream calls are cancelled.
    */
   signal?: AbortSignal;
+  /**
+   * Maximum allowed summary character count forwarded to every individual
+   * summarizeBatch() call.
+   */
+  maxChars?: number;
 }
 
 /**
@@ -424,4 +435,9 @@ export interface SummarizeResult {
       total: number;
     };
   };
+  /**
+   * True if the summary stream was aborted early because it exceeded the
+   * raw character context size of the batch.
+   */
+  abortedOversized?: boolean;
 }

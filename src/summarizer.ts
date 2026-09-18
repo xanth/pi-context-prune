@@ -84,6 +84,43 @@ export async function summarizeBatch(
   // Fast-fail if already aborted before we even start.
   if (options.signal?.aborted) throw new Error("summarizeBatch: aborted before start");
 
+  const maxChars =
+    options.maxChars ??
+    batch.toolCalls.reduce((s, tc) => s + tc.resultText.length, 0);
+
+  // If raw context is completely empty (0 characters), any summary will exceed it.
+  // Short-circuit immediately without making an unnecessary LLM call.
+  if (maxChars <= 0) {
+    return {
+      summaryText: "",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      abortedOversized: true,
+    };
+  }
+
+  const abortController = new AbortController();
+  let abortedOversized = false;
+  let latestPartialText = "";
+
+  if (options.signal) {
+    if (options.signal.aborted) {
+      abortController.abort(options.signal.reason);
+    } else {
+      options.signal.addEventListener(
+        "abort",
+        () => abortController.abort(options.signal?.reason),
+        { once: true }
+      );
+    }
+  }
+
   try {
     const model = resolveModel(config, ctx);
 
@@ -122,7 +159,7 @@ export async function summarizeBatch(
         apiKey: auth.apiKey,
         headers: auth.headers,
         env: auth.env,
-        signal: options.signal,
+        signal: abortController.signal,
         ...summarizerThinkingOptions(config),
       }
     );
@@ -138,16 +175,50 @@ export async function summarizeBatch(
     };
 
     for await (const event of responseStream) {
-      // Belt-and-suspenders: break early when signal fires mid-stream.
+      // Belt-and-suspenders: break early when caller signal fires mid-stream.
       if (options.signal?.aborted) break;
       if (event.type === "text_start" || event.type === "text_delta" || event.type === "text_end") {
         reportTextProgress(event.partial);
+        const chars = receivedTextChars(event.partial);
+        if (chars > maxChars) {
+          abortedOversized = true;
+          latestPartialText = event.partial.content
+            .filter((c: any) => c.type === "text")
+            .map((c: any) => c.text)
+            .join("\n");
+          abortController.abort();
+          break;
+        }
       }
     }
 
-    // If signal fired while we were iterating, propagate the abort so
+    // If caller signal fired while we were iterating, propagate the abort so
     // flushPending can detect it and restore batches.
     if (options.signal?.aborted) throw new Error("summarizeBatch: aborted during stream");
+
+    if (abortedOversized) {
+      let responseUsage = {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      };
+      try {
+        const partialResponse = await responseStream.result();
+        if (partialResponse?.usage) {
+          responseUsage = partialResponse.usage;
+        }
+      } catch {
+        // Stream was cut short by abortController; partial usage may not resolve.
+      }
+      return {
+        summaryText: latestPartialText,
+        usage: responseUsage,
+        abortedOversized: true,
+      };
+    }
 
     const response = await responseStream.result();
     reportTextProgress(response);
@@ -207,6 +278,7 @@ export async function summarizeBatches(
     return [
       await summarizeBatch(batches[0], config, ctx, {
         signal: options.signal,
+        maxChars: options.maxChars,
         onTextProgress: (receivedChars) => {
           options.onBatchTextProgress?.(0, 1, batches[0], receivedChars);
         },
@@ -219,6 +291,7 @@ export async function summarizeBatches(
     batches.map((batch, index) =>
       summarizeBatch(batch, config, ctx, {
         signal: options.signal,
+        maxChars: options.maxChars,
         onTextProgress: (receivedChars) => {
           options.onBatchTextProgress?.(index, batches.length, batch, receivedChars);
         },

@@ -253,6 +253,63 @@ describe("runtime delivery (context_prune tool)", () => {
     );
   });
 
+  it("aborts summary stream early when incoming chunks exceed raw context size", async () => {
+    sendMessageBehavior = undefined;
+    let chunksEmittedAfterExceeded = 0;
+    // Raw output is 15 characters
+    const rawOutput = "short 123456789";
+    const harness = makeHarness(makeBranch({ id: "tc-1", name: "bash", resultText: rawOutput }));
+
+    let streamAborted = false;
+    const streamingChunks = [
+      "12345", // 5 chars (total 5 <= 15)
+      "67890", // 5 chars (total 10 <= 15)
+      "1234567", // 7 chars (total 17 > 15 -> EXCEEDED!)
+      "chunk-should-never-be-reached-1",
+      "chunk-should-never-be-reached-2",
+    ];
+
+    const providerWithChunks = {
+      stream: (_model: any, _llmContext: any, options: any) => {
+        options?.signal?.addEventListener("abort", () => {
+          streamAborted = true;
+        });
+        return {
+          async *[Symbol.asyncIterator]() {
+            let accumulated = "";
+            for (let i = 0; i < streamingChunks.length; i++) {
+              if (options?.signal?.aborted) break;
+              accumulated += streamingChunks[i];
+              if (i >= 3) {
+                chunksEmittedAfterExceeded++;
+              }
+              yield {
+                type: "text_delta",
+                partial: { content: [{ type: "text", text: accumulated }] },
+              };
+            }
+          },
+          result: () => {
+            return Promise.resolve({
+              content: [{ type: "text", text: "aborted-partial" }],
+              stopReason: streamAborted ? "aborted" : "stop",
+              usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+            });
+          },
+        };
+      },
+    };
+    harness.ctx.modelRegistry.getProvider = () => providerWithChunks;
+
+    await loadExtension({}, harness);
+    const result = await runPruneTool(harness);
+
+    assert.equal(result.details.ok, true);
+    assert.equal(result.details.reason, "skipped-oversized");
+    assert.equal(streamAborted, true, "stream must be aborted early");
+    assert.equal(chunksEmittedAfterExceeded, 0, "no chunks after limit should be emitted");
+  });
+
   it("prunes only indexed tool results in the context event", async () => {
     sendMessageBehavior = undefined;
     // tc-1 is flushed and indexed; tc-2 arrives after the flush and is never

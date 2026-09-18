@@ -15,14 +15,25 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./src/config.js";
-import { captureBatch, captureUnindexedBatchesFromSession, groupBatchesByMode } from "./src/batch-capture.js";
+import {
+  captureBatch,
+  captureUnindexedBatchesFromSession,
+  groupBatchesByMode,
+} from "./src/batch-capture.js";
 import { summarizeBatch, summarizeBatches } from "./src/summarizer.js";
 import { ToolCallIndexer } from "./src/indexer.js";
 import { pruneMessages } from "./src/pruner.js";
-import { annotateWithUnprunedCount, countUnprunedToolCalls } from "./src/reminder.js";
+import {
+  annotateWithUnprunedCount,
+  countUnprunedToolCalls,
+} from "./src/reminder.js";
 import { registerQueryTool } from "./src/query-tool.js";
 import { registerCommands, setPruneStatusWidget } from "./src/commands.js";
-import { formatSummaryToolCallRefs, makeSummaryDetails, wrapSummaryForContext } from "./src/summary-refs.js";
+import {
+  formatSummaryToolCallRefs,
+  makeSummaryDetails,
+  wrapSummaryForContext,
+} from "./src/summary-refs.js";
 import type { SummaryToolCallRef } from "./src/summary-refs.js";
 import type {
   ContextPruneConfig,
@@ -66,20 +77,47 @@ export default function (pi: ExtensionAPI) {
   let isFlushing = false;
 
   type FlushResult =
-    | { ok: true; reason: "flushed" | "skipped-oversized"; batchCount: number; toolCallCount: number; rawCharCount: number; summaryCharCount: number }
-    | { ok: false; reason: "empty" | "already-flushing" | "summarizer-failed" | "stale-context" | "failed" | "aborted"; error?: string };
+    | {
+        ok: true;
+        reason: "flushed" | "skipped-oversized";
+        batchCount: number;
+        toolCallCount: number;
+        rawCharCount: number;
+        summaryCharCount: number;
+      }
+    | {
+        ok: false;
+        reason:
+          | "empty"
+          | "already-flushing"
+          | "summarizer-failed"
+          | "stale-context"
+          | "failed"
+          | "aborted";
+        error?: string;
+      };
 
   type SessionAppender = {
     appendCustomEntry(customType: string, data?: unknown): string;
-    appendCustomMessageEntry(customType: string, content: string, display: boolean, details?: unknown): string;
+    appendCustomMessageEntry(
+      customType: string,
+      content: string,
+      display: boolean,
+      details?: unknown,
+    ): string;
   };
 
   const isStaleContextError = (err: unknown) =>
     err instanceof Error && err.message.includes("This extension ctx is stale");
 
-  const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
+  const errorMessage = (err: unknown) =>
+    err instanceof Error ? err.message : String(err);
 
-  const safeNotify = (ctx: any, message: string, type: "info" | "warning" | "error" = "info") => {
+  const safeNotify = (
+    ctx: any,
+    message: string,
+    type: "info" | "warning" | "error" = "info",
+  ) => {
     try {
       ctx.ui.notify(message, type);
     } catch (err) {
@@ -92,9 +130,12 @@ export default function (pi: ExtensionAPI) {
     Array.isArray(message.content) &&
     message.content.some((block: any) => block?.type === "toolCall");
 
-  const isFinalAssistantMessage = (message: any) => message?.role === "assistant" && !assistantMessageHasToolCalls(message);
+  const isFinalAssistantMessage = (message: any) =>
+    message?.role === "assistant" && !assistantMessageHasToolCalls(message);
 
-  const trimBatchToPendingRange = (batch: CapturedBatch): CapturedBatch | null => {
+  const trimBatchToPendingRange = (
+    batch: CapturedBatch,
+  ): CapturedBatch | null => {
     const currentFrontier = frontier.get();
     let toolCalls = batch.toolCalls;
 
@@ -108,9 +149,12 @@ export default function (pi: ExtensionAPI) {
     // instead of dropping the whole batch on the floor.
     if (!currentFrontier) return { ...batch, toolCalls };
     if (batch.turnIndex < currentFrontier.lastAttemptedTurnIndex) return null;
-    if (batch.turnIndex > currentFrontier.lastAttemptedTurnIndex) return { ...batch, toolCalls };
+    if (batch.turnIndex > currentFrontier.lastAttemptedTurnIndex)
+      return { ...batch, toolCalls };
 
-    const originalIndex = toolCalls.findIndex((tc) => tc.toolCallId === currentFrontier.lastAttemptedToolCallId);
+    const originalIndex = toolCalls.findIndex(
+      (tc) => tc.toolCallId === currentFrontier.lastAttemptedToolCallId,
+    );
     if (originalIndex < 0) return { ...batch, toolCalls };
 
     const remaining = toolCalls.slice(originalIndex + 1);
@@ -122,7 +166,10 @@ export default function (pi: ExtensionAPI) {
     pendingBatches.unshift(...batches);
   };
 
-  const persistBatchIndex = (batch: CapturedBatch, appendEntry: (customType: string, data?: unknown) => void) => {
+  const persistBatchIndex = (
+    batch: CapturedBatch,
+    appendEntry: (customType: string, data?: unknown) => void,
+  ) => {
     const records = batch.toolCalls.map((tc) => ({
       toolCallId: tc.toolCallId,
       toolName: tc.toolName,
@@ -147,7 +194,9 @@ export default function (pi: ExtensionAPI) {
     let batches: CapturedBatch[] = [];
     try {
       const branch = ctx.sessionManager.getBranch();
-      batches = captureUnindexedBatchesFromSession(branch, indexer, [CONTEXT_PRUNE_TOOL_NAME]);
+      batches = captureUnindexedBatchesFromSession(branch, indexer, [
+        CONTEXT_PRUNE_TOOL_NAME,
+      ]);
     } catch {
       batches = pendingBatches.slice();
     }
@@ -165,12 +214,16 @@ export default function (pi: ExtensionAPI) {
   // steer messages at protocol-safe boundaries. Session delivery is used only for
   // agent-message's final-message flush, where print-mode Pi may invalidate pi.*
   // while the summarizer LLM call is in flight.
-  const flushPending = async (ctx: any, options: FlushOptions = {}): Promise<FlushResult> => {
+  const flushPending = async (
+    ctx: any,
+    options: FlushOptions = {},
+  ): Promise<FlushResult> => {
     if (isFlushing) return { ok: false, reason: "already-flushing" };
 
     // Use pre-captured batches if provided (avoids double-capture when the
     // caller previewed the queue before opening the progress overlay).
-    const batches: CapturedBatch[] = options.previewedBatches ?? capturePendingBatches(ctx);
+    const batches: CapturedBatch[] =
+      options.previewedBatches ?? capturePendingBatches(ctx);
 
     if (batches.length === 0) return { ok: false, reason: "empty" };
 
@@ -188,22 +241,37 @@ export default function (pi: ExtensionAPI) {
     let sessionManager: SessionAppender | undefined;
     if (delivery === "session") {
       try {
-        sessionManager = ctx.sessionManager as unknown as SessionAppender;
+        sessionManager = ctx.sessionManager as any;
       } catch (err) {
         restoreBatches(batches);
         isFlushing = false;
-        return { ok: false, reason: isStaleContextError(err) ? "stale-context" : "failed", error: errorMessage(err) };
+        return {
+          ok: false,
+          reason: isStaleContextError(err) ? "stale-context" : "failed",
+          error: errorMessage(err),
+        };
       }
     }
 
-    const appendEntry = (customType: string, data?: unknown) => sessionManager!.appendCustomEntry(customType, data);
+    const appendEntry = (customType: string, data?: unknown) =>
+      sessionManager!.appendCustomEntry(customType, data);
     const appendSummaryMessage = (content: string, details: unknown) =>
-      sessionManager!.appendCustomMessageEntry(CUSTOM_TYPE_SUMMARY, content, false, details);
+      sessionManager!.appendCustomMessageEntry(
+        CUSTOM_TYPE_SUMMARY,
+        content,
+        false,
+        details,
+      );
 
     try {
       setPruneStatusWidget(ctx, currentConfig.value, "prune: summarizing…");
 
-      const reportBatchTextProgress = (index: number, total: number, batch: CapturedBatch, receivedChars: number) => {
+      const reportBatchTextProgress = (
+        index: number,
+        total: number,
+        batch: CapturedBatch,
+        receivedChars: number,
+      ) => {
         options.onBatchTextProgress?.(index, total, batch, receivedChars);
       };
 
@@ -218,11 +286,21 @@ export default function (pi: ExtensionAPI) {
           const r = await summarizeBatch(batches[i], currentConfig.value, ctx, {
             signal: options.signal,
             onTextProgress: (receivedChars) => {
-              reportBatchTextProgress(i, batches.length, batches[i], receivedChars);
+              reportBatchTextProgress(
+                i,
+                batches.length,
+                batches[i],
+                receivedChars,
+              );
             },
           });
           results.push(r);
-          options.onProgress(i, batches.length, batches[i], r ? "done" : "skipped");
+          options.onProgress(
+            i,
+            batches.length,
+            batches[i],
+            r ? "done" : "skipped",
+          );
         }
       } else {
         // Parallel — one LLM call per batch, all in flight simultaneously.
@@ -259,10 +337,16 @@ export default function (pi: ExtensionAPI) {
         }
 
         const batch = batches[i];
-        const batchRawCharCount = batch.toolCalls.reduce((s, tc) => s + tc.resultText.length, 0);
+        const batchRawCharCount = batch.toolCalls.reduce(
+          (s, tc) => s + tc.resultText.length,
+          0,
+        );
         const summaryRefs = indexer.allocateSummaryRefs(batch);
-        const summaryText = wrapSummaryForContext(result.summaryText + formatSummaryToolCallRefs(summaryRefs));
-        const shouldSkipOversized = summaryText.length > batchRawCharCount;
+        const summaryText = wrapSummaryForContext(
+          result.summaryText + formatSummaryToolCallRefs(summaryRefs),
+        );
+        const shouldSkipOversized =
+          result.abortedOversized || summaryText.length > batchRawCharCount;
 
         statsAccum.add(result.usage);
         totalRawCharCount += batchRawCharCount;
@@ -279,7 +363,12 @@ export default function (pi: ExtensionAPI) {
 
         if (delivery === "runtime") {
           // Collected and delivered as a single steer message after the loop.
-          runtimeSummaryParts.push({ summaryText, batch, summaryRefs, batchDetails });
+          runtimeSummaryParts.push({
+            summaryText,
+            batch,
+            summaryRefs,
+            batchDetails,
+          });
           continue;
         }
 
@@ -323,16 +412,22 @@ export default function (pi: ExtensionAPI) {
           pi.sendMessage(
             {
               customType: CUSTOM_TYPE_SUMMARY,
-              content: runtimeSummaryParts.map((p) => p.summaryText).join("\n\n"),
+              content: runtimeSummaryParts
+                .map((p) => p.summaryText)
+                .join("\n\n"),
               display: false,
               details: {
-                toolCallRefs: runtimeSummaryParts.flatMap((p) => p.batchDetails.toolCallRefs),
-                toolNames: runtimeSummaryParts.flatMap((p) => p.batchDetails.toolNames),
+                toolCallRefs: runtimeSummaryParts.flatMap(
+                  (p) => p.batchDetails.toolCallRefs,
+                ),
+                toolNames: runtimeSummaryParts.flatMap(
+                  (p) => p.batchDetails.toolNames,
+                ),
                 turnIndex: runtimeSummaryParts[0].batchDetails.turnIndex,
                 timestamp: Date.now(),
               },
             },
-            { deliverAs: "steer" }
+            { deliverAs: "steer" },
           );
         } catch (err) {
           // Nothing was delivered: re-queue every runtime batch for the next flush.
@@ -396,7 +491,11 @@ export default function (pi: ExtensionAPI) {
           }
         }
       } catch (err) {
-        return { ok: false, reason: isStaleContextError(err) ? "stale-context" : "failed", error: errorMessage(err) };
+        return {
+          ok: false,
+          reason: isStaleContextError(err) ? "stale-context" : "failed",
+          error: errorMessage(err),
+        };
       }
 
       setPruneStatusWidget(ctx, currentConfig.value, statsAccum.getStats());
@@ -404,12 +503,16 @@ export default function (pi: ExtensionAPI) {
       // Respect notifySkipped for both automatic flushes and /pruner now.
       if (currentConfig.value.notifySkipped) {
         for (const batch of oversizedBatches) {
-          const batchRaw = batch.toolCalls.reduce((s, tc) => s + tc.resultText.length, 0);
-          const batchSummaryLen = results[batches.indexOf(batch)]?.summaryText.length ?? 0;
+          const batchRaw = batch.toolCalls.reduce(
+            (s, tc) => s + tc.resultText.length,
+            0,
+          );
+          const batchSummaryLen =
+            results[batches.indexOf(batch)]?.summaryText.length ?? 0;
           safeNotify(
             ctx,
             `pruner: skipped pruning turn ${batch.turnIndex} (${batch.toolCalls.length} tool call${batch.toolCalls.length === 1 ? "" : "s"}) — summary was ${batchSummaryLen} chars vs ${batchRaw} raw chars; frontier advanced past this range`,
-            "warning"
+            "warning",
           );
         }
       }
@@ -433,7 +536,11 @@ export default function (pi: ExtensionAPI) {
       if (isStaleContextError(err)) {
         return { ok: false, reason: "stale-context", error: errorMessage(err) };
       }
-      safeNotify(ctx, `pruner: summarization failed: ${errorMessage(err)}`, "error");
+      safeNotify(
+        ctx,
+        `pruner: summarization failed: ${errorMessage(err)}`,
+        "error",
+      );
       return { ok: false, reason: "failed", error: errorMessage(err) };
     } finally {
       isFlushing = false;
@@ -444,16 +551,18 @@ export default function (pi: ExtensionAPI) {
   // Uses `pi` (ExtensionRuntime) because getActiveTools/setActiveTools are
   // runtime methods, NOT part of ExtensionContext/ExtensionCommandContext.
   const syncToolActivation = () => {
-    const shouldActivate = currentConfig.value.enabled && currentConfig.value.pruneOn === "agentic-auto";
+    const shouldActivate =
+      currentConfig.value.enabled &&
+      currentConfig.value.pruneOn === "agentic-auto";
     const activeTools = pi.getActiveTools();
     if (shouldActivate) {
       if (!activeTools.includes(CONTEXT_PRUNE_TOOL_NAME)) {
         pi.setActiveTools([...activeTools, CONTEXT_PRUNE_TOOL_NAME]);
       }
-    } else {
-      if (activeTools.includes(CONTEXT_PRUNE_TOOL_NAME)) {
-        pi.setActiveTools(activeTools.filter((t: string) => t !== CONTEXT_PRUNE_TOOL_NAME));
-      }
+    } else if (activeTools.includes(CONTEXT_PRUNE_TOOL_NAME)) {
+      pi.setActiveTools(
+        activeTools.filter((t: string) => t !== CONTEXT_PRUNE_TOOL_NAME),
+      );
     }
   };
 
@@ -483,7 +592,7 @@ export default function (pi: ExtensionAPI) {
     if (currentConfig.value.showStartupNotice) {
       ctx.ui.notify(
         `pruner loaded — pruning ${currentConfig.value.enabled ? "ON" : "OFF"} | model: ${currentConfig.value.summarizerModel}`,
-        "info"
+        "info",
       );
     }
   });
@@ -514,14 +623,16 @@ export default function (pi: ExtensionAPI) {
       event.message,
       event.toolResults,
       event.turnIndex,
-      Date.now()
+      Date.now(),
     );
     const batch = trimBatchToPendingRange({
       ...capturedBatch,
       // Do not summarize the pruner's own housekeeping tool result. Otherwise
       // agentic-auto mode can queue the context_prune result and try to flush it
       // during agent_end, when Pi may already have invalidated the extension ctx.
-      toolCalls: capturedBatch.toolCalls.filter((tc) => tc.toolName !== CONTEXT_PRUNE_TOOL_NAME),
+      toolCalls: capturedBatch.toolCalls.filter(
+        (tc) => tc.toolName !== CONTEXT_PRUNE_TOOL_NAME,
+      ),
     });
     if (!batch) return;
 
@@ -552,7 +663,7 @@ export default function (pi: ExtensionAPI) {
         safeNotify(
           ctx,
           `pruner: ${n} turn${n === 1 ? "" : "s"} queued — will summarize on ${trigger}`,
-          "info"
+          "info",
         );
       }
     }
@@ -560,7 +671,8 @@ export default function (pi: ExtensionAPI) {
 
   // ── tool_execution_end: flush when context_checkpoint (or legacy context_tag) fires ──
   pi.on("tool_execution_end", async (event, ctx) => {
-    if (!(CONTEXT_TAG_TOOL_NAMES as readonly string[]).includes(event.toolName)) return;
+    if (!(CONTEXT_TAG_TOOL_NAMES as readonly string[]).includes(event.toolName))
+      return;
     if (!currentConfig.value.enabled) return;
     if (currentConfig.value.pruneOn !== "on-context-tag") return;
     await flushPending(ctx, { delivery: "runtime" });
@@ -584,7 +696,11 @@ export default function (pi: ExtensionAPI) {
   pi.on("agent_end", async (_event, ctx) => {
     if (!currentConfig.value.enabled) return;
     if (pendingBatches.length === 0) return;
-    setPruneStatusWidget(ctx, currentConfig.value, `prune: ${pendingBatches.length} pending`);
+    setPruneStatusWidget(
+      ctx,
+      currentConfig.value,
+      `prune: ${pendingBatches.length} pending`,
+    );
   });
 
   // ── context: prune summarized tool results from next LLM call ─────────────
@@ -627,7 +743,11 @@ export default function (pi: ExtensionAPI) {
 
   // ── before_agent_start: inject system prompt for agentic-auto mode ───────────
   pi.on("before_agent_start", async (event, _ctx) => {
-    if (!currentConfig.value.enabled || currentConfig.value.pruneOn !== "agentic-auto") return undefined;
+    if (
+      !currentConfig.value.enabled ||
+      currentConfig.value.pruneOn !== "agentic-auto"
+    )
+      return undefined;
     // Append agentic-auto instructions to the system prompt
     const appended = AGENTIC_AUTO_SYSTEM_PROMPT;
     const original = event.systemPrompt ?? "";
@@ -639,8 +759,18 @@ export default function (pi: ExtensionAPI) {
   registerQueryTool(pi, indexer);
 
   // ── Register context_prune tool (always registered, activated only in agentic-auto mode) ──
-  registerContextPruneTool(pi, (ctx, options) => flushPending(ctx, { delivery: "runtime", ...options }));
+  registerContextPruneTool(pi, (ctx, options) =>
+    flushPending(ctx, { delivery: "runtime", ...options }),
+  );
 
   // ── Register /pruner command + summary message renderer ────────────
-  registerCommands(pi, currentConfig, flushPending, capturePendingBatches, syncToolActivation, () => statsAccum.getStats(), indexer);
+  registerCommands(
+    pi,
+    currentConfig,
+    flushPending,
+    capturePendingBatches,
+    syncToolActivation,
+    () => statsAccum.getStats(),
+    indexer,
+  );
 }
