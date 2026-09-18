@@ -56,6 +56,7 @@ import {
 import { StatsAccumulator } from "./src/stats.js";
 import { registerContextPruneTool } from "./src/context-prune-tool.js";
 import { PruneFrontierTracker } from "./src/frontier.js";
+import { EagerSummaryPool } from "./src/eager-pool.js";
 
 export default function (pi: ExtensionAPI) {
   // Shared mutable config reference — updated by /pruner commands
@@ -71,6 +72,9 @@ export default function (pi: ExtensionAPI) {
 
   // Shared prune frontier — tracks the last completed prune attempt boundary
   const frontier = new PruneFrontierTracker();
+
+  // Shared eager summary pool — manages non-blocking speculative background summarization
+  const eagerPool = new EagerSummaryPool();
 
   // Pending batches — accumulated until the prune trigger fires
   const pendingBatches: CapturedBatch[] = [];
@@ -275,11 +279,30 @@ export default function (pi: ExtensionAPI) {
         options.onBatchTextProgress?.(index, total, batch, receivedChars);
       };
 
-      // Summarize batches. When onProgress is provided (i.e. /pruner now with the
-      // multi-row overlay) we process sequentially so each row can be checked off
-      // as its LLM call completes. Otherwise all batches run in parallel.
+      // Summarize batches. When eager mode is enabled (and batchingMode is "turn"),
+      // background jobs started as turns completed are drained (instant hits or
+      // in-flight await). When onProgress is provided (/pruner now with overlay),
+      // we process sequentially so each row can be checked off. Otherwise parallel.
       let results: (import("./src/types.js").SummarizeResult | null)[];
-      if (options.onProgress) {
+      if (
+        currentConfig.value.eager &&
+        currentConfig.value.batchingMode === "turn"
+      ) {
+        results = await eagerPool.drain(batches, currentConfig.value, ctx, {
+          signal: options.signal,
+          onBatchTextProgress: reportBatchTextProgress,
+        });
+        if (options.onProgress) {
+          for (let i = 0; i < batches.length; i++) {
+            options.onProgress(
+              i,
+              batches.length,
+              batches[i],
+              results[i] ? "done" : "skipped",
+            );
+          }
+        }
+      } else if (options.onProgress) {
         results = [];
         for (let i = 0; i < batches.length; i++) {
           options.onProgress(i, batches.length, batches[i], "start");
@@ -517,6 +540,8 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
+      eagerPool.evict(processedBatches);
+
       return {
         ok: true,
         reason: allOversized ? "skipped-oversized" : "flushed",
@@ -582,6 +607,7 @@ export default function (pi: ExtensionAPI) {
 
     // Clear any batches queued before the session reload
     pendingBatches.length = 0;
+    eagerPool.abortAll();
 
     // Update footer status
     setPruneStatusWidget(ctx, currentConfig.value, statsAccum.getStats());
@@ -599,6 +625,7 @@ export default function (pi: ExtensionAPI) {
 
   // Rebuild index and stats after tree navigation too (branch may have different history)
   pi.on("session_tree", async (_event, ctx) => {
+    eagerPool.abortAll();
     indexer.reconstructFromSession(ctx);
     statsAccum.reconstructFromSession(ctx);
     frontier.reconstructFromSession(ctx);
@@ -637,6 +664,7 @@ export default function (pi: ExtensionAPI) {
     if (!batch) return;
 
     pendingBatches.push(batch);
+    eagerPool.enqueue([batch], currentConfig.value, ctx);
 
     if (currentConfig.value.pruneOn === "every-turn") {
       await flushPending(ctx, { delivery: "session" });

@@ -18,7 +18,9 @@ For each tool call provide:
 
 Keep each tool call to 1-3 bullet points. Be concise.`;
 
-export function summarizerThinkingOptions(config: ContextPruneConfig): Record<string, unknown> {
+export function summarizerThinkingOptions(
+  config: ContextPruneConfig,
+): Record<string, unknown> {
   const level: SummarizerThinking = config.summarizerThinking;
   if (level === "default") {
     return {};
@@ -36,7 +38,10 @@ export function summarizerThinkingOptions(config: ContextPruneConfig): Record<st
  * config.summarizerModel === "default" => ctx.model
  * "provider/model-id" => ctx.modelRegistry.find(provider, modelId), fallback to ctx.model with warning
  */
-export function resolveModel(config: ContextPruneConfig, ctx: ExtensionContext): any {
+export function resolveModel(
+  config: ContextPruneConfig,
+  ctx: ExtensionContext,
+): any {
   if (config.summarizerModel === "default") {
     return ctx.model;
   }
@@ -45,7 +50,7 @@ export function resolveModel(config: ContextPruneConfig, ctx: ExtensionContext):
   if (slashIndex === -1) {
     ctx.ui.notify(
       `pruner: invalid summarizerModel "${config.summarizerModel}", expected "provider/model-id". Falling back to default model.`,
-      "warning"
+      "warning",
     );
     return ctx.model;
   }
@@ -57,7 +62,7 @@ export function resolveModel(config: ContextPruneConfig, ctx: ExtensionContext):
   if (!found) {
     ctx.ui.notify(
       `pruner: model "${config.summarizerModel}" not found in registry. Falling back to default model.`,
-      "warning"
+      "warning",
     );
     return ctx.model;
   }
@@ -79,10 +84,11 @@ export async function summarizeBatch(
   batch: CapturedBatch,
   config: ContextPruneConfig,
   ctx: ExtensionContext,
-  options: SummarizeBatchOptions = {}
+  options: SummarizeBatchOptions = {},
 ): Promise<SummarizeResult | null> {
   // Fast-fail if already aborted before we even start.
-  if (options.signal?.aborted) throw new Error("summarizeBatch: aborted before start");
+  if (options.signal?.aborted)
+    throw new Error("summarizeBatch: aborted before start");
 
   const maxChars =
     options.maxChars ??
@@ -116,7 +122,7 @@ export async function summarizeBatch(
       options.signal.addEventListener(
         "abort",
         () => abortController.abort(options.signal?.reason),
-        { once: true }
+        { once: true },
       );
     }
   }
@@ -126,20 +132,31 @@ export async function summarizeBatch(
 
     const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
     if (!auth.ok) {
-      const authMessage = "error" in auth ? auth.error : "authentication failed";
-      ctx.ui.notify(`pruner: summarization failed: ${authMessage}`, "error");
+      const authMessage =
+        "error" in auth ? auth.error : "authentication failed";
+      if (!options.silent) {
+        ctx.ui.notify(`pruner: summarization failed: ${authMessage}`, "error");
+      }
       return null;
     }
 
     const provider = ctx.modelRegistry.getProvider(model.provider);
     if (!provider) {
-      ctx.ui.notify(`pruner: summarization failed: unknown provider \"${model.provider}\"`, "error");
+      if (!options.silent) {
+        ctx.ui.notify(
+          `pruner: summarization failed: unknown provider "${model.provider}"`,
+          "error",
+        );
+      }
       return null;
     }
 
     const serialized = serializeBatchForSummarizer(batch);
     const userMessage =
-      SYSTEM_PROMPT + "\n\n<tool-call-batch>\n" + serialized + "\n</tool-call-batch>";
+      SYSTEM_PROMPT +
+      "\n\n<tool-call-batch>\n" +
+      serialized +
+      "\n</tool-call-batch>";
 
     // Use the provider-owned stream API directly. The compatibility registry
     // facade still exposes auth/header resolution, but no longer exposes a
@@ -161,7 +178,7 @@ export async function summarizeBatch(
         env: auth.env,
         signal: abortController.signal,
         ...summarizerThinkingOptions(config),
-      }
+      },
     );
 
     let lastReportedChars = -1;
@@ -177,7 +194,11 @@ export async function summarizeBatch(
     for await (const event of responseStream) {
       // Belt-and-suspenders: break early when caller signal fires mid-stream.
       if (options.signal?.aborted) break;
-      if (event.type === "text_start" || event.type === "text_delta" || event.type === "text_end") {
+      if (
+        event.type === "text_start" ||
+        event.type === "text_delta" ||
+        event.type === "text_end"
+      ) {
         reportTextProgress(event.partial);
         const chars = receivedTextChars(event.partial);
         if (chars > maxChars) {
@@ -194,7 +215,8 @@ export async function summarizeBatch(
 
     // If caller signal fired while we were iterating, propagate the abort so
     // flushPending can detect it and restore batches.
-    if (options.signal?.aborted) throw new Error("summarizeBatch: aborted during stream");
+    if (options.signal?.aborted)
+      throw new Error("summarizeBatch: aborted during stream");
 
     if (abortedOversized) {
       let responseUsage = {
@@ -229,7 +251,9 @@ export async function summarizeBatch(
       throw new Error("summarizeBatch: stream stopped with reason aborted");
     }
     if (response.stopReason === "error") {
-      throw new Error(response.errorMessage ?? "Summarizer stopped with reason: error");
+      throw new Error(
+        response.errorMessage ?? "Summarizer stopped with reason: error",
+      );
     }
 
     const llmText = response.content
@@ -245,10 +269,9 @@ export async function summarizeBatch(
     // Propagate abort errors upward so flushPending can check signal.aborted
     // and return { ok: false, reason: "aborted" } without showing a UI error.
     if (options.signal?.aborted) throw err;
-    ctx.ui.notify(
-      `pruner: summarization failed: ${err.message}`,
-      "error"
-    );
+    if (!options.silent) {
+      ctx.ui.notify(`pruner: summarization failed: ${err.message}`, "error");
+    }
     return null;
   }
 }
@@ -270,7 +293,7 @@ export async function summarizeBatches(
   batches: CapturedBatch[],
   config: ContextPruneConfig,
   ctx: ExtensionContext,
-  options: SummarizeBatchesOptions = {}
+  options: SummarizeBatchesOptions = {},
 ): Promise<Array<SummarizeResult | null>> {
   if (batches.length === 0) return [];
   // Single batch — delegate to the single-batch path (no extra overhead)
@@ -279,6 +302,7 @@ export async function summarizeBatches(
       await summarizeBatch(batches[0], config, ctx, {
         signal: options.signal,
         maxChars: options.maxChars,
+        silent: options.silent,
         onTextProgress: (receivedChars) => {
           options.onBatchTextProgress?.(0, 1, batches[0], receivedChars);
         },
@@ -292,10 +316,16 @@ export async function summarizeBatches(
       summarizeBatch(batch, config, ctx, {
         signal: options.signal,
         maxChars: options.maxChars,
+        silent: options.silent,
         onTextProgress: (receivedChars) => {
-          options.onBatchTextProgress?.(index, batches.length, batch, receivedChars);
+          options.onBatchTextProgress?.(
+            index,
+            batches.length,
+            batch,
+            receivedChars,
+          );
         },
-      })
-    )
+      }),
+    ),
   );
 }

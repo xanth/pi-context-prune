@@ -48,7 +48,7 @@ class SettingsOverlay extends Container {
 
 export function pruneStatusText(config: ContextPruneConfig, stats?: SummarizerStats): string {
   const mode = PRUNE_ON_MODES.find((m) => m.value === config.pruneOn)?.label ?? config.pruneOn;
-  let text = `prune: ${config.enabled ? "ON" : "OFF"} (${mode})`;
+  let text = `prune: ${config.enabled ? "ON" : "OFF"} (${mode}${config.eager ? ", eager" : ""})`;
   if (stats && stats.callCount > 0) {
     text += ` │ ↑${formatTokens(stats.totalInputTokens)} ↓${formatTokens(stats.totalOutputTokens)} ${formatCost(stats.totalCost)}`;
   }
@@ -475,6 +475,13 @@ export function registerCommands(
               currentValue: config.batchingMode,
               description: batchingModeDescription(config.batchingMode),
             },
+            {
+              id: "eager",
+              label: "Eager background mode",
+              values: ["true", "false"],
+              currentValue: String(config.eager),
+              description: "Speculatively summarize turns in background so pruning latency is near-zero",
+            },
           ];
 
           let settingsList: SettingsList;
@@ -530,6 +537,8 @@ export function registerCommands(
               if (batchingItem) {
                 batchingItem.description = batchingModeDescription(newConfig.batchingMode);
               }
+            } else if (id === "eager") {
+              newConfig.eager = newValue === "true";
             }
             currentConfig.value = newConfig;
             saveConfig(newConfig);

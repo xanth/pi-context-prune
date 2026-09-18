@@ -74,7 +74,10 @@ export const CONTEXT_PRUNE_TOOL_NAME = "context_prune";
  * (see https://github.com/ttttmr/pi-context). The legacy name is kept for
  * backward compatibility with older installs of that extension.
  */
-export const CONTEXT_TAG_TOOL_NAMES = ["context_checkpoint", "context_tag"] as const;
+export const CONTEXT_TAG_TOOL_NAMES = [
+ "context_checkpoint",
+ "context_tag",
+] as const;
 
 /** System prompt injected when agentic-auto mode is active */
 export const AGENTIC_AUTO_SYSTEM_PROMPT = `[Context Prune — Agentic Auto Mode]
@@ -114,7 +117,12 @@ What happens when you call context_prune:
  * - "agentic-auto"   : the LLM agent decides when to prune by calling the context_prune tool;
  *                       the tool is only active in this mode and guided by prompt instructions
  */
-export type PruneOn = "every-turn" | "on-context-tag" | "on-demand" | "agent-message" | "agentic-auto";
+export type PruneOn =
+ | "every-turn"
+ | "on-context-tag"
+ | "on-demand"
+ | "agent-message"
+ | "agentic-auto";
 
 /**
  * Granularity of pruning batches.
@@ -125,95 +133,126 @@ export type PruneOn = "every-turn" | "on-context-tag" | "on-demand" | "agent-mes
 export type BatchingMode = "turn" | "agent-message";
 
 /** Thinking/reasoning level requested for summarizer LLM calls. */
-export type SummarizerThinking = "default" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type SummarizerThinking =
+ | "default"
+ | "off"
+ | "minimal"
+ | "low"
+ | "medium"
+ | "high"
+ | "xhigh";
 
 /** Choices for the summarizer thinking setting (used by commands and settings overlay) */
-export const SUMMARIZER_THINKING_LEVELS: { value: SummarizerThinking; label: string }[] = [
-  { value: "default", label: "Default" },
-  { value: "off", label: "Off" },
-  { value: "minimal", label: "Minimal" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "xhigh", label: "XHigh" },
+export const SUMMARIZER_THINKING_LEVELS: {
+ value: SummarizerThinking;
+ label: string;
+}[] = [
+ { value: "default", label: "Default" },
+ { value: "off", label: "Off" },
+ { value: "minimal", label: "Minimal" },
+ { value: "low", label: "Low" },
+ { value: "medium", label: "Medium" },
+ { value: "high", label: "High" },
+ { value: "xhigh", label: "XHigh" },
 ];
 
 /** Choices for the batching-mode setting (used by commands and settings overlay) */
 export const BATCHING_MODES: { value: BatchingMode; label: string }[] = [
-  { value: "turn", label: "Per turn" },
-  { value: "agent-message", label: "Per agent message" },
+ { value: "turn", label: "Per turn" },
+ { value: "agent-message", label: "Per agent message" },
 ];
 
 /** Choices for the prune-on setting (used by commands and settings overlay) */
 export const PRUNE_ON_MODES: { value: PruneOn; label: string }[] = [
-  { value: "every-turn", label: "Every turn" },
-  { value: "on-context-tag", label: "On context tag" },
-  { value: "on-demand", label: "On demand" },
-  { value: "agent-message", label: "On agent message" },
-  { value: "agentic-auto", label: "Agentic auto" },
+ { value: "every-turn", label: "Every turn" },
+ { value: "on-context-tag", label: "On context tag" },
+ { value: "on-demand", label: "On demand" },
+ { value: "agent-message", label: "On agent message" },
+ { value: "agentic-auto", label: "Agentic auto" },
 ];
 
 /** Extension config stored in ~/.pi/agent/context-prune/settings.json */
 export interface ContextPruneConfig {
-  /** Whether to prune raw tool outputs from future LLM context */
-  enabled: boolean;
-  /** Whether to show the prune footer status line and queued turn notifications */
-  showPruneStatusLine: boolean;
-  /** Whether to show the passive "pruner loaded" notice when a session starts */
-  showStartupNotice: boolean;
-  /**
-   * Which model to use for summarization.
-   * "default" = current active Pi model (ctx.model)
-   * "provider/model-id" = explicit model (e.g. "anthropic/claude-haiku-3-5")
-   */
-  summarizerModel: string;
-  /** Thinking/reasoning level to request for summarizer calls. */
-  summarizerThinking: SummarizerThinking;
-  /** When to trigger summarization and pruning */
-  pruneOn: PruneOn;
-  /**
-   * Whether to inject a small ephemeral reminder before each LLM call
-   * telling the model how many unpruned tool-call results have piled up.
-   * Only honored when `enabled && pruneOn === "agentic-auto"`. In all other
-   * modes this flag is a no-op (the reminder is meant to nudge the LLM to
-   * call `context_prune` at a sensible cadence).
-   */
-  remindUnprunedCount: boolean;
-  /**
-   * Whether to show a warning notification when pruning is skipped because the
-   * generated summary would be larger than the raw tool output it replaces.
-   */
-  notifySkipped: boolean;
-  /**
-   * Granularity of each pruning batch.
-   * - "turn"          : one summary per assistant turn (default)
-   * - "agent-message" : one summary per user → final-agent-message span
-   *                     (all turns between two user messages are merged)
-   */
-  batchingMode: BatchingMode;
+ /** Whether to prune raw tool outputs from future LLM context */
+ enabled: boolean;
+ /** Whether to show the prune footer status line and queued turn notifications */
+ showPruneStatusLine: boolean;
+ /** Whether to show the passive "pruner loaded" notice when a session starts */
+ showStartupNotice: boolean;
+ /**
+  * Which model to use for summarization.
+  * "default" = current active Pi model (ctx.model)
+  * "provider/model-id" = explicit model (e.g. "anthropic/claude-haiku-3-5")
+  */
+ summarizerModel: string;
+ /** Thinking/reasoning level to request for summarizer calls. */
+ summarizerThinking: SummarizerThinking;
+ /** When to trigger summarization and pruning */
+ pruneOn: PruneOn;
+ /**
+  * Whether to inject a small ephemeral reminder before each LLM call
+  * telling the model how many unpruned tool-call results have piled up.
+  * Only honored when `enabled && pruneOn === "agentic-auto"`. In all other
+  * modes this flag is a no-op (the reminder is meant to nudge the LLM to
+  * call `context_prune` at a sensible cadence).
+  */
+ remindUnprunedCount: boolean;
+ /**
+  * Whether to show a warning notification when pruning is skipped because the
+  * generated summary would be larger than the raw tool output it replaces.
+  */
+ notifySkipped: boolean;
+ /**
+  * Granularity of each pruning batch.
+  * - "turn"          : one summary per assistant turn (default)
+  * - "agent-message" : one summary per user → final-agent-message span
+  *                     (all turns between two user messages are merged)
+  */
+ batchingMode: BatchingMode;
+ /**
+  * Whether to speculatively summarize batches in the background as turns complete,
+  * so summaries are already available when pruning is triggered.
+  * Only applicable when `batchingMode === "turn"`.
+  */
+ eager: boolean;
+ /**
+  * Maximum number of concurrent background summarizations in eager mode.
+  * Bounds background LLM requests to avoid hitting provider rate limits.
+  * Default: 1.
+  */
+ eagerConcurrency: number;
+ /**
+  * Minimum number of pending unsummarized batches before starting eager background
+  * summarization. Allows short interactions to avoid unnecessary speculative calls.
+  * Default: 1.
+  */
+ eagerMinPendingBatches: number;
 }
 
 export const DEFAULT_CONFIG: ContextPruneConfig = {
-  enabled: false,
-  showPruneStatusLine: true,
-  showStartupNotice: true,
-  summarizerModel: "default",
-  summarizerThinking: "default",
-  pruneOn: "agent-message",
-  remindUnprunedCount: true,
-  notifySkipped: true,
-  batchingMode: "turn",
+ enabled: false,
+ showPruneStatusLine: true,
+ showStartupNotice: true,
+ summarizerModel: "default",
+ summarizerThinking: "default",
+ pruneOn: "agent-message",
+ remindUnprunedCount: true,
+ notifySkipped: true,
+ batchingMode: "turn",
+ eager: false,
+ eagerConcurrency: 1,
+ eagerMinPendingBatches: 1,
 };
 
 // ── Captured batch ─────────────────────────────────────────────────────────
 
 /** A single tool call + its result as captured from turn_end */
 export interface CapturedToolCall {
-  toolCallId: string;
-  toolName: string;
-  args: Record<string, unknown>;
-  resultText: string;
-  isError: boolean;
+ toolCallId: string;
+ toolName: string;
+ args: Record<string, unknown>;
+ resultText: string;
+ isError: boolean;
 }
 
 /**
@@ -221,20 +260,20 @@ export interface CapturedToolCall {
  * Represents one assistant turn that contained tool calls.
  */
 export interface CapturedBatch {
-  turnIndex: number;
-  timestamp: number;
-  /** Any non-tool-call text from the assistant message (may be empty) */
-  assistantText: string;
-  toolCalls: CapturedToolCall[];
-  /**
-   * Grouping key assigned by `captureUnindexedBatchesFromSession`.
-   * Increments for each user message seen while walking the branch.
-   * Batches from the live `turn_end` path do NOT have this field set
-   * (they are always emitted one-per-turn regardless of batchingMode).
-   * Used by `groupBatchesByMode` to merge turns within the same
-   * user → agent-message span when batchingMode === "agent-message".
-   */
-  userTurnGroup?: number;
+ turnIndex: number;
+ timestamp: number;
+ /** Any non-tool-call text from the assistant message (may be empty) */
+ assistantText: string;
+ toolCalls: CapturedToolCall[];
+ /**
+  * Grouping key assigned by `captureUnindexedBatchesFromSession`.
+  * Increments for each user message seen while walking the branch.
+  * Batches from the live `turn_end` path do NOT have this field set
+  * (they are always emitted one-per-turn regardless of batchingMode).
+  * Used by `groupBatchesByMode` to merge turns within the same
+  * user → agent-message span when batchingMode === "agent-message".
+  */
+ userTurnGroup?: number;
 }
 
 // ── Index record ───────────────────────────────────────────────────────────
@@ -244,14 +283,14 @@ export interface CapturedBatch {
  * Contains the full original tool output for context_tree_query recovery.
  */
 export interface ToolCallRecord {
-  toolCallId: string;
-  toolName: string;
-  args: Record<string, unknown>;
-  /** Full original result text (potentially large; truncated only at query time) */
-  resultText: string;
-  isError: boolean;
-  turnIndex: number;
-  timestamp: number;
+ toolCallId: string;
+ toolName: string;
+ args: Record<string, unknown>;
+ /** Full original result text (potentially large; truncated only at query time) */
+ resultText: string;
+ isError: boolean;
+ turnIndex: number;
+ timestamp: number;
 }
 
 // ── Session persistence types ──────────────────────────────────────────────
@@ -261,7 +300,7 @@ export interface ToolCallRecord {
  * One entry per summarized batch; reconstructed into the runtime index on session_start.
  */
 export interface IndexEntryData {
-  toolCalls: ToolCallRecord[];
+ toolCalls: ToolCallRecord[];
 }
 
 /**
@@ -269,8 +308,8 @@ export interface IndexEntryData {
  * maps back to for future recovery through context_tree_query.
  */
 export interface SummaryToolCallRef {
-  shortId: string;
-  toolCallId: string;
+ shortId: string;
+ toolCallId: string;
 }
 
 /**
@@ -278,10 +317,10 @@ export interface SummaryToolCallRef {
  * Machine-readable metadata so renderers and extensions can inspect summaries.
  */
 export interface SummaryMessageDetails {
-  toolCallRefs: SummaryToolCallRef[];
-  toolNames: string[];
-  turnIndex: number;
-  timestamp: number;
+ toolCallRefs: SummaryToolCallRef[];
+ toolNames: string[];
+ turnIndex: number;
+ timestamp: number;
 }
 
 // ── Summarizer stats ────────────────────────────────────────────────────────
@@ -292,14 +331,14 @@ export interface SummaryMessageDetails {
  * restarts and branch navigation.
  */
 export interface SummarizerStats {
-  /** Cumulative input tokens across all summarizer calls */
-  totalInputTokens: number;
-  /** Cumulative output tokens across all summarizer calls */
-  totalOutputTokens: number;
-  /** Cumulative cost in USD across all summarizer calls */
-  totalCost: number;
-  /** Number of summarizer LLM calls made */
-  callCount: number;
+ /** Cumulative input tokens across all summarizer calls */
+ totalInputTokens: number;
+ /** Cumulative output tokens across all summarizer calls */
+ totalOutputTokens: number;
+ /** Cumulative cost in USD across all summarizer calls */
+ totalCost: number;
+ /** Number of summarizer LLM calls made */
+ callCount: number;
 }
 
 /** Outcome of the most recent completed prune attempt. */
@@ -313,24 +352,24 @@ export type PruneFrontierOutcome = "summarized" | "skipped-oversized";
  * failures do not advance the frontier.
  */
 export interface PruneFrontier {
-  /** Last tool call included in the completed prune attempt */
-  lastAttemptedToolCallId: string;
-  /** Name of the last tool call included in the completed prune attempt */
-  lastAttemptedToolName: string;
-  /** Assistant turn index containing the last attempted tool call */
-  lastAttemptedTurnIndex: number;
-  /** Timestamp captured when that last attempted tool call batch was recorded */
-  lastAttemptedTimestamp: number;
-  /** Number of batches included in the completed prune attempt */
-  attemptedBatchCount: number;
-  /** Number of tool calls included in the completed prune attempt */
-  attemptedToolCallCount: number;
-  /** Character count of the raw tool-result text that was eligible for pruning */
-  rawCharCount: number;
-  /** Character count of the rendered summary text that was produced */
-  summaryCharCount: number;
-  /** Whether the attempt actually pruned or was skipped for being oversized */
-  outcome: PruneFrontierOutcome;
+ /** Last tool call included in the completed prune attempt */
+ lastAttemptedToolCallId: string;
+ /** Name of the last tool call included in the completed prune attempt */
+ lastAttemptedToolName: string;
+ /** Assistant turn index containing the last attempted tool call */
+ lastAttemptedTurnIndex: number;
+ /** Timestamp captured when that last attempted tool call batch was recorded */
+ lastAttemptedTimestamp: number;
+ /** Number of batches included in the completed prune attempt */
+ attemptedBatchCount: number;
+ /** Number of tool calls included in the completed prune attempt */
+ attemptedToolCallCount: number;
+ /** Character count of the raw tool-result text that was eligible for pruning */
+ rawCharCount: number;
+ /** Character count of the rendered summary text that was produced */
+ summaryCharCount: number;
+ /** Whether the attempt actually pruned or was skipped for being oversized */
+ outcome: PruneFrontierOutcome;
 }
 
 /**
@@ -338,106 +377,115 @@ export interface PruneFrontier {
  * Only fired when the caller passes `onProgress` in `FlushOptions` (i.e. `/pruner now`).
  */
 export type ProgressCallback = (
-  index: number,
-  total: number,
-  batch: CapturedBatch,
-  stage: "start" | "done" | "skipped",
+ index: number,
+ total: number,
+ batch: CapturedBatch,
+ stage: "start" | "done" | "skipped",
 ) => void;
 
 /** Live text-progress callback for a batch currently being summarized. */
 export type BatchTextProgressCallback = (
-  index: number,
-  total: number,
-  batch: CapturedBatch,
-  receivedChars: number,
+ index: number,
+ total: number,
+ batch: CapturedBatch,
+ receivedChars: number,
 ) => void;
 
 /** Options accepted by `flushPending`. */
 export interface FlushOptions {
-  /** Delivery path: "runtime" uses sendMessage/steer (default); "session" writes directly to session. */
-  delivery?: "runtime" | "session";
-  /**
-   * When provided, batches are processed sequentially (one LLM call each) instead of
-   * in parallel, and this callback is invoked before/after each batch. Used by
-   * `/pruner now` to drive the multi-row progress overlay.
-   */
-  onProgress?: ProgressCallback;
-  /**
-   * When provided, receives the number of summary characters streamed so far for
-   * the currently-running batch. Used by `/pruner now` to show live progress.
-   */
-  onBatchTextProgress?: BatchTextProgressCallback;
-  /**
-   * Pre-captured batches from a prior `capturePendingBatches()` call.
-   * When set, `flushPending` skips the internal capture step and uses these directly.
-   * Avoids double-capture when the caller needs to know the batch count before
-   * opening the progress overlay.
-   */
-  previewedBatches?: CapturedBatch[];
-  /**
-   * Abort signal — when fired the in-flight summarization is cancelled and
-   * `flushPending` returns `{ ok: false, reason: "aborted" }` without advancing
-   * the frontier. All pending batches are restored so the next flush can retry.
-   */
-  signal?: AbortSignal;
+ /** Delivery path: "runtime" uses sendMessage/steer (default); "session" writes directly to session. */
+ delivery?: "runtime" | "session";
+ /**
+  * When provided, batches are processed sequentially (one LLM call each) instead of
+  * in parallel, and this callback is invoked before/after each batch. Used by
+  * `/pruner now` to drive the multi-row progress overlay.
+  */
+ onProgress?: ProgressCallback;
+ /**
+  * When provided, receives the number of summary characters streamed so far for
+  * the currently-running batch. Used by `/pruner now` to show live progress.
+  */
+ onBatchTextProgress?: BatchTextProgressCallback;
+ /**
+  * Pre-captured batches from a prior `capturePendingBatches()` call.
+  * When set, `flushPending` skips the internal capture step and uses these directly.
+  * Avoids double-capture when the caller needs to know the batch count before
+  * opening the progress overlay.
+  */
+ previewedBatches?: CapturedBatch[];
+ /**
+  * Abort signal — when fired the in-flight summarization is cancelled and
+  * `flushPending` returns `{ ok: false, reason: "aborted" }` without advancing
+  * the frontier. All pending batches are restored so the next flush can retry.
+  */
+ signal?: AbortSignal;
 }
 
 /** Options for a single summarizeBatch() call. */
 export interface SummarizeBatchOptions {
-  /** Receives the number of summary text characters streamed so far. */
-  onTextProgress?: (receivedChars: number) => void;
-  /**
-   * Abort signal — when fired the in-flight stream call is cancelled and the
-   * batch is treated as aborted (not a summarizer failure).
-   */
-  signal?: AbortSignal;
-  /**
-   * Maximum allowed summary character count. If the incoming summary exceeds
-   * this threshold while streaming, the stream is aborted early and marked as
-   * oversized. Defaults to the total raw character count of the batch tool calls.
-   */
-  maxChars?: number;
+ /** Receives the number of summary text characters streamed so far. */
+ onTextProgress?: (receivedChars: number) => void;
+ /**
+  * Abort signal — when fired the in-flight stream call is cancelled and the
+  * batch is treated as aborted (not a summarizer failure).
+  */
+ signal?: AbortSignal;
+ /**
+  * Maximum allowed summary character count. If the incoming summary exceeds
+  * this threshold while streaming, the stream is aborted early and marked as
+  * oversized. Defaults to the total raw character count of the batch tool calls.
+  */
+ maxChars?: number;
+ /**
+  * If true, suppresses error notifications to the UI. Used for speculative
+  * background summarization so transient errors don't interrupt the user.
+  */
+ silent?: boolean;
 }
 
 /** Options for summarizeBatches() when callers want live per-batch text progress. */
 export interface SummarizeBatchesOptions {
-  /** Receives streamed summary text character counts for each batch. */
-  onBatchTextProgress?: BatchTextProgressCallback;
-  /**
-   * Abort signal forwarded to every individual summarizeBatch() call.
-   * When fired, all in-flight stream calls are cancelled.
-   */
-  signal?: AbortSignal;
-  /**
-   * Maximum allowed summary character count forwarded to every individual
-   * summarizeBatch() call.
-   */
-  maxChars?: number;
+ /** Receives streamed summary text character counts for each batch. */
+ onBatchTextProgress?: BatchTextProgressCallback;
+ /**
+  * Abort signal forwarded to every individual summarizeBatch() call.
+  * When fired, all in-flight stream calls are cancelled.
+  */
+ signal?: AbortSignal;
+ /**
+  * Maximum allowed summary character count forwarded to every individual
+  * summarizeBatch() call.
+  */
+ maxChars?: number;
+ /**
+  * If true, suppresses error notifications to the UI.
+  */
+ silent?: boolean;
 }
 
 /**
  * Result of a summarization call — the summary text plus LLM usage data.
  */
 export interface SummarizeResult {
-  summaryText: string;
-  /** Usage data from the LLM response (tokens + cost) */
-  usage: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-    totalTokens: number;
-    cost: {
-      input: number;
-      output: number;
-      cacheRead: number;
-      cacheWrite: number;
-      total: number;
-    };
+ summaryText: string;
+ /** Usage data from the LLM response (tokens + cost) */
+ usage: {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: {
+   input: number;
+   output: number;
+   cacheRead: number;
+   cacheWrite: number;
+   total: number;
   };
-  /**
-   * True if the summary stream was aborted early because it exceeded the
-   * raw character context size of the batch.
-   */
-  abortedOversized?: boolean;
+ };
+ /**
+  * True if the summary stream was aborted early because it exceeded the
+  * raw character context size of the batch.
+  */
+ abortedOversized?: boolean;
 }

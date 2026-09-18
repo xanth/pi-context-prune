@@ -42,6 +42,15 @@ export async function loadConfig(): Promise<ContextPruneConfig> {
           : DEFAULT_CONFIG.remindUnprunedCount,
       notifySkipped:
         typeof merged.notifySkipped === "boolean" ? merged.notifySkipped : DEFAULT_CONFIG.notifySkipped,
+      eager: typeof merged.eager === "boolean" ? merged.eager : DEFAULT_CONFIG.eager,
+      eagerConcurrency:
+        typeof merged.eagerConcurrency === "number" && merged.eagerConcurrency > 0
+          ? Math.floor(merged.eagerConcurrency)
+          : DEFAULT_CONFIG.eagerConcurrency,
+      eagerMinPendingBatches:
+        typeof merged.eagerMinPendingBatches === "number" && merged.eagerMinPendingBatches >= 0
+          ? Math.floor(merged.eagerMinPendingBatches)
+          : DEFAULT_CONFIG.eagerMinPendingBatches,
     };
   } catch {
     return { ...DEFAULT_CONFIG };
