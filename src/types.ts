@@ -61,14 +61,14 @@ export const STATUS_WIDGET_ID = "context-prune";
 
 /** Structured status data for the footer widget */
 export interface PruneStatusDetails {
-  pendingCount?: number;
-  eagerStats?: { queued: number; running: number; done: number; failed: number };
-  stats?: {
-    totalInputTokens: number;
-    totalOutputTokens: number;
-    totalCost: number;
-    callCount: number;
-  };
+ pendingCount?: number;
+ eagerStats?: { queued: number; running: number; done: number; failed: number };
+ stats?: {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCost: number;
+  callCount: number;
+ };
 }
 
 /**

@@ -17,7 +17,10 @@ interface EagerJob {
 
 export interface EagerPoolCallbacks {
   onJobStart?: (batch: CapturedBatch) => void;
-  onJobComplete?: (batch: CapturedBatch, result: SummarizeResult | null) => void;
+  onJobComplete?: (
+    batch: CapturedBatch,
+    result: SummarizeResult | null,
+  ) => void;
 }
 
 /**

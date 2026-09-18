@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { before, after, describe, it } from "node:test";
 import { pruneStatusText } from "../src/commands.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
+import { normalizeMessageSequencing } from "../src/pruner.js";
 
 // ── Config isolation ────────────────────────────────────────────────────────
 // config.ts resolves ~/.pi/agent/context-prune/settings.json at import time
@@ -213,70 +214,387 @@ describe("flush delivery", { concurrency: 1 }, () => {
   describe("runtime delivery (context_prune tool)", { concurrency: 1 }, () => {
     before(() => writeSettings("agentic-auto"));
 
-  it("sends ONE coalesced steer message for a multi-batch flush", async () => {
-    sendMessageBehavior = undefined;
-    const calls = [
-      { id: "tc-1", name: "bash", resultText: "output one".repeat(20) },
-      { id: "tc-2", name: "read", resultText: "output two".repeat(20) },
-      { id: "tc-3", name: "grep", resultText: "output three".repeat(20) },
-    ];
-    const harness = makeHarness(makeBranch(...calls));
-    await loadExtension({}, harness);
+    it("sends ONE coalesced steer message for a multi-batch flush", async () => {
+      sendMessageBehavior = undefined;
+      const calls = [
+        { id: "tc-1", name: "bash", resultText: "output one".repeat(20) },
+        { id: "tc-2", name: "read", resultText: "output two".repeat(20) },
+        { id: "tc-3", name: "grep", resultText: "output three".repeat(20) },
+      ];
+      const harness = makeHarness(makeBranch(...calls));
+      await loadExtension({}, harness);
 
-    const result = await runPruneTool(harness);
+      const result = await runPruneTool(harness);
 
-    // The tool-level result reports success.
-    assert.equal(result.details.ok, true);
-    assert.equal(result.details.reason, "flushed");
-    assert.equal(result.details.batchCount, 3);
+      // The tool-level result reports success.
+      assert.equal(result.details.ok, true);
+      assert.equal(result.details.reason, "flushed");
+      assert.equal(result.details.batchCount, 3);
 
-    // Exactly ONE summary message sent — not one per batch.
-    const sends = harness.seq.filter((s) => s.kind === "sendMessage");
-    assert.equal(
-      sends.length,
-      1,
-      `expected 1 sendMessage, got ${sends.length}`,
-    );
-    const send = sends[0] as Extract<SeqEntry, { kind: "sendMessage" }>;
+      // Exactly ONE summary message sent — not one per batch.
+      const sends = harness.seq.filter((s) => s.kind === "sendMessage");
+      assert.equal(
+        sends.length,
+        1,
+        `expected 1 sendMessage, got ${sends.length}`,
+      );
+      const send = sends[0] as Extract<SeqEntry, { kind: "sendMessage" }>;
 
-    assert.equal(send.opts.deliverAs, "steer");
-    assert.equal(send.msg.customType, "context-prune-summary");
-    assert.equal(send.msg.display, false);
+      assert.equal(send.opts.deliverAs, "steer");
+      assert.equal(send.msg.customType, "context-prune-summary");
+      assert.equal(send.msg.display, false);
 
-    // All three batch summaries ride along in the one message.
-    for (const name of ["bash", "read", "grep"]) {
+      // All three batch summaries ride along in the one message.
+      for (const name of ["bash", "read", "grep"]) {
+        assert.ok(
+          send.msg.content.includes(`Summary of ${name}`),
+          `summary for ${name} missing`,
+        );
+      }
+
+      // Merged details carry refs for every tool call.
+      assert.equal(send.msg.details.toolCallRefs.length, 3);
+      assert.equal(send.msg.details.toolNames.length, 3);
+
+      // Index entries are persisted AFTER the message was delivered.
+      const firstSend = harness.seq.findIndex((s) => s.kind === "sendMessage");
+      const indexEntries = harness.seq
+        .map((s, i) => ({ s, i }))
+        .filter(
+          ({ s }) =>
+            s.kind === "appendEntry" &&
+            (s as any).customType === "context-prune-index",
+        );
+      assert.equal(indexEntries.length, 3, "one index entry per batch");
+      for (const { i } of indexEntries)
+        assert.ok(
+          i > firstSend,
+          "index entry persisted before the summary was delivered",
+        );
+    });
+
+    it("sends no message and persists no index when delivery fails with stale ctx", async () => {
+      sendMessageBehavior = () => {
+        throw new Error("This extension ctx is stale");
+      };
+      try {
+        const calls = [
+          { id: "tc-1", name: "bash", resultText: "output one".repeat(20) },
+          { id: "tc-2", name: "read", resultText: "output two".repeat(20) },
+        ];
+        const harness = makeHarness(makeBranch(...calls));
+        await loadExtension({}, harness);
+
+        const result = await runPruneTool(harness);
+
+        // Nothing delivered → flush reports failure, tool surfaces it.
+        assert.equal(result.details.ok, false);
+
+        // Critical safety property: no index entries persisted without a
+        // delivered summary (otherwise tool results would be pruned from
+        // context with no replacement).
+        const indexEntries = harness.seq.filter(
+          (s) =>
+            s.kind === "appendEntry" &&
+            (s as any).customType === "context-prune-index",
+        );
+        assert.equal(
+          indexEntries.length,
+          0,
+          "index entries persisted despite failed delivery",
+        );
+      } finally {
+        sendMessageBehavior = undefined;
+      }
+    });
+
+    it("skips batches whose summary is larger than the raw output", async () => {
+      sendMessageBehavior = undefined;
+      // Tiny raw output → wrapped summary is necessarily larger → batch skipped.
+      const harness = makeHarness(
+        makeBranch({ id: "tc-1", name: "bash", resultText: "x" }),
+      );
+      await loadExtension({}, harness);
+
+      const result = await runPruneTool(harness);
+
+      assert.equal(result.details.ok, true);
+      assert.equal(result.details.reason, "skipped-oversized");
+      assert.equal(
+        harness.seq.filter((s) => s.kind === "sendMessage").length,
+        0,
+      );
+      assert.equal(
+        harness.seq.filter(
+          (s) =>
+            s.kind === "appendEntry" &&
+            (s as any).customType === "context-prune-index",
+        ).length,
+        0,
+      );
+    });
+
+    it("aborts summary stream early when incoming chunks exceed raw context size", async () => {
+      sendMessageBehavior = undefined;
+      let chunksEmittedAfterExceeded = 0;
+      // Raw output is 15 characters
+      const rawOutput = "short 123456789";
+      const harness = makeHarness(
+        makeBranch({ id: "tc-1", name: "bash", resultText: rawOutput }),
+      );
+
+      let streamAborted = false;
+      const streamingChunks = [
+        "12345", // 5 chars (total 5 <= 15)
+        "67890", // 5 chars (total 10 <= 15)
+        "1234567", // 7 chars (total 17 > 15 -> EXCEEDED!)
+        "chunk-should-never-be-reached-1",
+        "chunk-should-never-be-reached-2",
+      ];
+
+      const providerWithChunks = {
+        stream: (_model: any, _llmContext: any, options: any) => {
+          options?.signal?.addEventListener("abort", () => {
+            streamAborted = true;
+          });
+          return {
+            async *[Symbol.asyncIterator]() {
+              let accumulated = "";
+              for (let i = 0; i < streamingChunks.length; i++) {
+                if (options?.signal?.aborted) break;
+                accumulated += streamingChunks[i];
+                if (i >= 3) {
+                  chunksEmittedAfterExceeded++;
+                }
+                yield {
+                  type: "text_delta",
+                  partial: { content: [{ type: "text", text: accumulated }] },
+                };
+              }
+            },
+            result: () => {
+              return Promise.resolve({
+                content: [{ type: "text", text: "aborted-partial" }],
+                stopReason: streamAborted ? "aborted" : "stop",
+                usage: {
+                  input: 10,
+                  output: 5,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  totalTokens: 15,
+                  cost: {
+                    input: 0,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    total: 0,
+                  },
+                },
+              });
+            },
+          };
+        },
+      };
+      harness.ctx.modelRegistry.getProvider = () => providerWithChunks;
+
+      await loadExtension({}, harness);
+      const result = await runPruneTool(harness);
+
+      assert.equal(result.details.ok, true);
+      assert.equal(result.details.reason, "skipped-oversized");
+      assert.equal(streamAborted, true, "stream must be aborted early");
+      assert.equal(
+        chunksEmittedAfterExceeded,
+        0,
+        "no chunks after limit should be emitted",
+      );
+    });
+
+    it("prunes only indexed tool results in the context event", async () => {
+      sendMessageBehavior = undefined;
+      // tc-1 is flushed and indexed; tc-2 arrives after the flush and is never
+      // part of the session branch, so it must stay in context.
+      const pruned = {
+        id: "tc-1",
+        name: "bash",
+        resultText: "output one".repeat(20),
+      };
+      const unpruned = {
+        id: "tc-9",
+        name: "read",
+        resultText: "still raw".repeat(20),
+      };
+      const harness = makeHarness(makeBranch(pruned));
+      await loadExtension({}, harness);
+
+      await runPruneTool(harness);
+
+      const contextHandler = harness.handlers.get("context");
+      assert.ok(contextHandler);
+      const outcome = await contextHandler(
+        { messages: [toolResultMessage(pruned), toolResultMessage(unpruned)] },
+        harness.ctx,
+      );
       assert.ok(
-        send.msg.content.includes(`Summary of ${name}`),
-        `summary for ${name} missing`,
+        outcome?.messages,
+        "context event should return filtered messages",
       );
-    }
+      const remaining = outcome.messages.filter(
+        (m: any) => m.role === "toolResult",
+      );
+      assert.equal(remaining.length, 1);
+      assert.equal(
+        remaining[0].toolCallId,
+        "tc-9",
+        "only the indexed result is pruned",
+      );
+    });
 
-    // Merged details carry refs for every tool call.
-    assert.equal(send.msg.details.toolCallRefs.length, 3);
-    assert.equal(send.msg.details.toolNames.length, 3);
+    it("drains eagerly summarized batches during context_prune tool execution", async () => {
+      sendMessageBehavior = undefined;
+      const calls = [
+        { id: "tc-1", name: "bash", resultText: "output one".repeat(20) },
+        { id: "tc-2", name: "read", resultText: "output two".repeat(20) },
+      ];
+      const harness = makeHarness(makeBranch(...calls));
 
-    // Index entries are persisted AFTER the message was delivered.
-    const firstSend = harness.seq.findIndex((s) => s.kind === "sendMessage");
-    const indexEntries = harness.seq
-      .map((s, i) => ({ s, i }))
-      .filter(
-        ({ s }) =>
-          s.kind === "appendEntry" &&
-          (s as any).customType === "context-prune-index",
+      let providerCallCount = 0;
+      const originalGetProvider = harness.ctx.modelRegistry.getProvider;
+      harness.ctx.modelRegistry.getProvider = (providerId: string) => {
+        const p = originalGetProvider(providerId);
+        return {
+          ...p,
+          stream: (model: any, context: any, options: any) => {
+            providerCallCount++;
+            return p.stream(model, context, options);
+          },
+        };
+      };
+
+      writeFileSync(
+        settingsPath,
+        JSON.stringify({
+          enabled: true,
+          pruneOn: "agentic-auto",
+          batchingMode: "turn",
+          eager: true,
+          eagerConcurrency: 2,
+          eagerMinPendingBatches: 1,
+          showPruneStatusLine: false,
+        }),
       );
-    assert.equal(indexEntries.length, 3, "one index entry per batch");
-    for (const { i } of indexEntries)
-      assert.ok(
-        i > firstSend,
-        "index entry persisted before the summary was delivered",
+
+      await loadExtension({}, harness);
+
+      const turnEnd = harness.handlers.get("turn_end");
+      assert.ok(turnEnd);
+      for (let i = 0; i < calls.length; i++) {
+        const tc = calls[i];
+        await turnEnd(
+          {
+            message: {
+              role: "assistant",
+              content: [
+                { type: "toolCall", id: tc.id, name: tc.name, arguments: {} },
+              ],
+            },
+            toolResults: [
+              {
+                toolCallId: tc.id,
+                content: [{ type: "text", text: tc.resultText }],
+              },
+            ],
+            turnIndex: i + 1,
+          },
+          harness.ctx,
+        );
+      }
+
+      // Wait slightly for eager background jobs to finish
+      await new Promise((r) => setTimeout(r, 60));
+      assert.equal(
+        providerCallCount,
+        2,
+        "both batches should be eagerly summarized in background",
       );
+
+      // Calling context_prune should drain pre-computed summaries with 0 new provider calls
+      const result = await runPruneTool(harness);
+      assert.equal(result.details.ok, true);
+      assert.equal(result.details.reason, "flushed");
+      assert.equal(
+        providerCallCount,
+        2,
+        "no additional provider calls during flush",
+      );
+    });
+
+    it("formats status line showing pending count and live eager stats", () => {
+      const config: ContextPruneConfig = {
+        ...DEFAULT_CONFIG,
+        enabled: true,
+        eager: true,
+        pruneOn: "agentic-auto",
+      };
+
+      assert.equal(
+        pruneStatusText(config, {
+          pendingCount: 0,
+          eagerStats: { queued: 0, running: 0, done: 0, failed: 0 },
+        }),
+        "prune: 0 pending",
+      );
+
+      assert.equal(
+        pruneStatusText(config, {
+          pendingCount: 2,
+          eagerStats: { queued: 1, running: 1, done: 0, failed: 0 },
+        }),
+        "prune: 2 pending (1 eager running)",
+      );
+
+      assert.equal(
+        pruneStatusText(config, {
+          pendingCount: 3,
+          eagerStats: { queued: 0, running: 1, done: 2, failed: 0 },
+        }),
+        "prune: 3 pending (1 eager running, 2 ready)",
+      );
+
+      assert.equal(
+        pruneStatusText(config, {
+          pendingCount: 2,
+          eagerStats: { queued: 0, running: 0, done: 2, failed: 0 },
+        }),
+        "prune: 2 pending (2 ready)",
+      );
+    });
+
+    it("normalizes message sequencing for strict providers like Gemini", () => {
+      const input = [
+        { role: "assistant", content: [{ type: "toolCall", id: "c1", name: "bash" }] },
+        { role: "toolResult", toolCallId: "c1", content: [{ type: "text", text: "cmd output" }] },
+        { role: "custom", customType: "context-prune-summary", content: "summary 1" },
+        { role: "custom", customType: "context-prune-summary", content: "summary 2" },
+        { role: "user", content: [{ type: "text", text: "continue" }] },
+      ];
+
+      const normalized = normalizeMessageSequencing(input);
+
+      assert.equal(normalized.length, 4);
+      assert.equal(normalized[0].role, "assistant");
+      assert.equal(normalized[1].role, "toolResult");
+      assert.equal(normalized[2].role, "assistant");
+      assert.equal(normalized[2].content[0].text, "I have processed the tool results.");
+      assert.equal(normalized[3].role, "user");
+      assert.equal(normalized[3].content[0].text, "summary 1\n\nsummary 2\n\ncontinue");
+    });
   });
 
-  it("sends no message and persists no index when delivery fails with stale ctx", async () => {
-    sendMessageBehavior = () => {
-      throw new Error("This extension ctx is stale");
-    };
-    try {
+  describe("session delivery (agent-message mode)", { concurrency: 1 }, () => {
+    it("appends one summary message per batch and sends no steer messages", async () => {
+      sendMessageBehavior = undefined;
+      writeSettings("agent-message");
       const calls = [
         { id: "tc-1", name: "bash", resultText: "output one".repeat(20) },
         { id: "tc-2", name: "read", resultText: "output two".repeat(20) },
@@ -284,354 +602,60 @@ describe("flush delivery", { concurrency: 1 }, () => {
       const harness = makeHarness(makeBranch(...calls));
       await loadExtension({}, harness);
 
-      const result = await runPruneTool(harness);
-
-      // Nothing delivered → flush reports failure, tool surfaces it.
-      assert.equal(result.details.ok, false);
-
-      // Critical safety property: no index entries persisted without a
-      // delivered summary (otherwise tool results would be pruned from
-      // context with no replacement).
-      const indexEntries = harness.seq.filter(
-        (s) =>
-          s.kind === "appendEntry" &&
-          (s as any).customType === "context-prune-index",
-      );
-      assert.equal(
-        indexEntries.length,
-        0,
-        "index entries persisted despite failed delivery",
-      );
-    } finally {
-      sendMessageBehavior = undefined;
-    }
-  });
-
-  it("skips batches whose summary is larger than the raw output", async () => {
-    sendMessageBehavior = undefined;
-    // Tiny raw output → wrapped summary is necessarily larger → batch skipped.
-    const harness = makeHarness(
-      makeBranch({ id: "tc-1", name: "bash", resultText: "x" }),
-    );
-    await loadExtension({}, harness);
-
-    const result = await runPruneTool(harness);
-
-    assert.equal(result.details.ok, true);
-    assert.equal(result.details.reason, "skipped-oversized");
-    assert.equal(harness.seq.filter((s) => s.kind === "sendMessage").length, 0);
-    assert.equal(
-      harness.seq.filter(
-        (s) =>
-          s.kind === "appendEntry" &&
-          (s as any).customType === "context-prune-index",
-      ).length,
-      0,
-    );
-  });
-
-  it("aborts summary stream early when incoming chunks exceed raw context size", async () => {
-    sendMessageBehavior = undefined;
-    let chunksEmittedAfterExceeded = 0;
-    // Raw output is 15 characters
-    const rawOutput = "short 123456789";
-    const harness = makeHarness(
-      makeBranch({ id: "tc-1", name: "bash", resultText: rawOutput }),
-    );
-
-    let streamAborted = false;
-    const streamingChunks = [
-      "12345", // 5 chars (total 5 <= 15)
-      "67890", // 5 chars (total 10 <= 15)
-      "1234567", // 7 chars (total 17 > 15 -> EXCEEDED!)
-      "chunk-should-never-be-reached-1",
-      "chunk-should-never-be-reached-2",
-    ];
-
-    const providerWithChunks = {
-      stream: (_model: any, _llmContext: any, options: any) => {
-        options?.signal?.addEventListener("abort", () => {
-          streamAborted = true;
-        });
-        return {
-          async *[Symbol.asyncIterator]() {
-            let accumulated = "";
-            for (let i = 0; i < streamingChunks.length; i++) {
-              if (options?.signal?.aborted) break;
-              accumulated += streamingChunks[i];
-              if (i >= 3) {
-                chunksEmittedAfterExceeded++;
-              }
-              yield {
-                type: "text_delta",
-                partial: { content: [{ type: "text", text: accumulated }] },
-              };
-            }
+      // Final assistant message (no tool calls) triggers the flush.
+      const messageEnd = harness.handlers.get("message_end");
+      assert.ok(messageEnd);
+      await messageEnd(
+        {
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "done" }],
           },
-          result: () => {
-            return Promise.resolve({
-              content: [{ type: "text", text: "aborted-partial" }],
-              stopReason: streamAborted ? "aborted" : "stop",
-              usage: {
-                input: 10,
-                output: 5,
-                cacheRead: 0,
-                cacheWrite: 0,
-                totalTokens: 15,
-                cost: {
-                  input: 0,
-                  output: 0,
-                  cacheRead: 0,
-                  cacheWrite: 0,
-                  total: 0,
-                },
-              },
-            });
-          },
-        };
-      },
-    };
-    harness.ctx.modelRegistry.getProvider = () => providerWithChunks;
-
-    await loadExtension({}, harness);
-    const result = await runPruneTool(harness);
-
-    assert.equal(result.details.ok, true);
-    assert.equal(result.details.reason, "skipped-oversized");
-    assert.equal(streamAborted, true, "stream must be aborted early");
-    assert.equal(
-      chunksEmittedAfterExceeded,
-      0,
-      "no chunks after limit should be emitted",
-    );
-  });
-
-  it("prunes only indexed tool results in the context event", async () => {
-    sendMessageBehavior = undefined;
-    // tc-1 is flushed and indexed; tc-2 arrives after the flush and is never
-    // part of the session branch, so it must stay in context.
-    const pruned = {
-      id: "tc-1",
-      name: "bash",
-      resultText: "output one".repeat(20),
-    };
-    const unpruned = {
-      id: "tc-9",
-      name: "read",
-      resultText: "still raw".repeat(20),
-    };
-    const harness = makeHarness(makeBranch(pruned));
-    await loadExtension({}, harness);
-
-    await runPruneTool(harness);
-
-    const contextHandler = harness.handlers.get("context");
-    assert.ok(contextHandler);
-    const outcome = await contextHandler(
-      { messages: [toolResultMessage(pruned), toolResultMessage(unpruned)] },
-      harness.ctx,
-    );
-    assert.ok(
-      outcome?.messages,
-      "context event should return filtered messages",
-    );
-    const remaining = outcome.messages.filter(
-      (m: any) => m.role === "toolResult",
-    );
-    assert.equal(remaining.length, 1);
-    assert.equal(
-      remaining[0].toolCallId,
-      "tc-9",
-      "only the indexed result is pruned",
-    );
-  });
-
-  it("drains eagerly summarized batches during context_prune tool execution", async () => {
-    sendMessageBehavior = undefined;
-    const calls = [
-      { id: "tc-1", name: "bash", resultText: "output one".repeat(20) },
-      { id: "tc-2", name: "read", resultText: "output two".repeat(20) },
-    ];
-    const harness = makeHarness(makeBranch(...calls));
-
-    let providerCallCount = 0;
-    const originalGetProvider = harness.ctx.modelRegistry.getProvider;
-    harness.ctx.modelRegistry.getProvider = (providerId: string) => {
-      const p = originalGetProvider(providerId);
-      return {
-        ...p,
-        stream: (model: any, context: any, options: any) => {
-          providerCallCount++;
-          return p.stream(model, context, options);
         },
-      };
-    };
+        harness.ctx,
+      );
 
-    writeFileSync(
-      settingsPath,
-      JSON.stringify({
-        enabled: true,
-        pruneOn: "agentic-auto",
-        batchingMode: "turn",
-        eager: true,
-        eagerConcurrency: 2,
-        eagerMinPendingBatches: 1,
-        showPruneStatusLine: false,
-      }),
-    );
+      assert.equal(
+        harness.seq.filter((s) => s.kind === "sendMessage").length,
+        0,
+        "session delivery must not steer",
+      );
+      const summaryAppends = harness.seq.filter(
+        (s) =>
+          s.kind === "appendCustomMessageEntry" &&
+          (s as any).customType === "context-prune-summary",
+      );
+      assert.equal(summaryAppends.length, 2, "one summary entry per batch");
+    });
 
-    await loadExtension({}, harness);
+    it("does not flush on non-final assistant messages", async () => {
+      sendMessageBehavior = undefined;
+      const harness = makeHarness(
+        makeBranch({
+          id: "tc-1",
+          name: "bash",
+          resultText: "output one".repeat(20),
+        }),
+      );
+      await loadExtension({}, harness);
 
-    const turnEnd = harness.handlers.get("turn_end");
-    assert.ok(turnEnd);
-    for (let i = 0; i < calls.length; i++) {
-      const tc = calls[i];
-      await turnEnd(
+      const messageEnd = harness.handlers.get("message_end");
+      await messageEnd(
         {
           message: {
             role: "assistant",
             content: [
-              { type: "toolCall", id: tc.id, name: tc.name, arguments: {} },
+              { type: "toolCall", id: "tc-2", name: "read", arguments: {} },
             ],
           },
-          toolResults: [
-            {
-              toolCallId: tc.id,
-              content: [{ type: "text", text: tc.resultText }],
-            },
-          ],
-          turnIndex: i + 1,
         },
         harness.ctx,
       );
-    }
 
-    // Wait slightly for eager background jobs to finish
-    await new Promise((r) => setTimeout(r, 60));
-    assert.equal(
-      providerCallCount,
-      2,
-      "both batches should be eagerly summarized in background",
-    );
-
-    // Calling context_prune should drain pre-computed summaries with 0 new provider calls
-    const result = await runPruneTool(harness);
-    assert.equal(result.details.ok, true);
-    assert.equal(result.details.reason, "flushed");
-    assert.equal(
-      providerCallCount,
-      2,
-      "no additional provider calls during flush",
-    );
+      assert.equal(
+        harness.seq.filter((s) => s.kind === "appendCustomMessageEntry").length,
+        0,
+      );
+    });
   });
-
-  it("formats status line showing pending count and live eager stats", () => {
-    const config: ContextPruneConfig = {
-      ...DEFAULT_CONFIG,
-      enabled: true,
-      eager: true,
-      pruneOn: "agentic-auto",
-    };
-
-    assert.equal(
-      pruneStatusText(config, {
-        pendingCount: 0,
-        eagerStats: { queued: 0, running: 0, done: 0, failed: 0 },
-      }),
-      "prune: 0 pending",
-    );
-
-    assert.equal(
-      pruneStatusText(config, {
-        pendingCount: 2,
-        eagerStats: { queued: 1, running: 1, done: 0, failed: 0 },
-      }),
-      "prune: 2 pending (1 eager running)",
-    );
-
-    assert.equal(
-      pruneStatusText(config, {
-        pendingCount: 3,
-        eagerStats: { queued: 0, running: 1, done: 2, failed: 0 },
-      }),
-      "prune: 3 pending (1 eager running, 2 ready)",
-    );
-
-    assert.equal(
-      pruneStatusText(config, {
-        pendingCount: 2,
-        eagerStats: { queued: 0, running: 0, done: 2, failed: 0 },
-      }),
-      "prune: 2 pending (2 ready)",
-    );
-  });
-});
-
-describe("session delivery (agent-message mode)", { concurrency: 1 }, () => {
-  it("appends one summary message per batch and sends no steer messages", async () => {
-    sendMessageBehavior = undefined;
-    writeSettings("agent-message");
-    const calls = [
-      { id: "tc-1", name: "bash", resultText: "output one".repeat(20) },
-      { id: "tc-2", name: "read", resultText: "output two".repeat(20) },
-    ];
-    const harness = makeHarness(makeBranch(...calls));
-    await loadExtension({}, harness);
-
-    // Final assistant message (no tool calls) triggers the flush.
-    const messageEnd = harness.handlers.get("message_end");
-    assert.ok(messageEnd);
-    await messageEnd(
-      {
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "done" }],
-        },
-      },
-      harness.ctx,
-    );
-
-    assert.equal(
-      harness.seq.filter((s) => s.kind === "sendMessage").length,
-      0,
-      "session delivery must not steer",
-    );
-    const summaryAppends = harness.seq.filter(
-      (s) =>
-        s.kind === "appendCustomMessageEntry" &&
-        (s as any).customType === "context-prune-summary",
-    );
-    assert.equal(summaryAppends.length, 2, "one summary entry per batch");
-  });
-
-  it("does not flush on non-final assistant messages", async () => {
-    sendMessageBehavior = undefined;
-    const harness = makeHarness(
-      makeBranch({
-        id: "tc-1",
-        name: "bash",
-        resultText: "output one".repeat(20),
-      }),
-    );
-    await loadExtension({}, harness);
-
-    const messageEnd = harness.handlers.get("message_end");
-    await messageEnd(
-      {
-        message: {
-          role: "assistant",
-          content: [
-            { type: "toolCall", id: "tc-2", name: "read", arguments: {} },
-          ],
-        },
-      },
-      harness.ctx,
-    );
-
-    assert.equal(
-      harness.seq.filter((s) => s.kind === "appendCustomMessageEntry").length,
-      0,
-    );
-  });
-});
 });

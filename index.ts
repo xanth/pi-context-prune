@@ -25,7 +25,7 @@ import {
 } from "./src/batch-capture.js";
 import { summarizeBatch, summarizeBatches } from "./src/summarizer.js";
 import { ToolCallIndexer } from "./src/indexer.js";
-import { pruneMessages } from "./src/pruner.js";
+import { pruneMessages, normalizeMessageSequencing } from "./src/pruner.js";
 import {
   annotateWithUnprunedCount,
   countUnprunedToolCalls,
@@ -801,6 +801,15 @@ export default function (pi: ExtensionAPI) {
           changed = true;
         }
       }
+    }
+
+    // Normalize message sequencing for strict providers (Gemini, Anthropic):
+    // bridges toolResult -> user/custom with a synthetic assistant reply and
+    // merges consecutive user/custom messages.
+    const normalized = normalizeMessageSequencing(messages);
+    if (normalized.length !== messages.length || normalized !== messages) {
+      messages = normalized;
+      changed = true;
     }
 
     if (!changed) return undefined;
