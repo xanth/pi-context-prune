@@ -9,13 +9,27 @@ import {
   PROGRESS_WIDGET_ID,
   SUMMARIZER_THINKING_LEVELS,
 } from "./types.js";
-import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+} from "@earendil-works/pi-coding-agent";
 import { saveConfig } from "./config.js";
 import { formatTokens, formatCost, formatCharProgress } from "./stats.js";
-import { Container, Text, SettingsList, type SettingItem } from "@earendil-works/pi-tui";
-import { DynamicBorder, getSettingsListTheme } from "@earendil-works/pi-coding-agent";
+import {
+  Container,
+  Text,
+  SettingsList,
+  type SettingItem,
+} from "@earendil-works/pi-tui";
+import {
+  DynamicBorder,
+  getSettingsListTheme,
+} from "@earendil-works/pi-coding-agent";
 import { buildPruneTree, TreeBrowser } from "./tree-browser.js";
-import { normalizeSummaryToolCallRefs, unwrapSummaryForDisplay } from "./summary-refs.js";
+import {
+  normalizeSummaryToolCallRefs,
+  unwrapSummaryForDisplay,
+} from "./summary-refs.js";
 import type { ToolCallIndexer } from "./indexer.js";
 
 /**
@@ -46,8 +60,13 @@ class SettingsOverlay extends Container {
 
 // ── Status widget text ──────────────────────────────────────────────────────
 
-export function pruneStatusText(config: ContextPruneConfig, stats?: SummarizerStats): string {
-  const mode = PRUNE_ON_MODES.find((m) => m.value === config.pruneOn)?.label ?? config.pruneOn;
+export function pruneStatusText(
+  config: ContextPruneConfig,
+  stats?: SummarizerStats,
+): string {
+  const mode =
+    PRUNE_ON_MODES.find((m) => m.value === config.pruneOn)?.label ??
+    config.pruneOn;
   let text = `prune: ${config.enabled ? "ON" : "OFF"} (${mode}${config.eager ? ", eager" : ""})`;
   if (stats && stats.callCount > 0) {
     text += ` │ ↑${formatTokens(stats.totalInputTokens)} ↓${formatTokens(stats.totalOutputTokens)} ${formatCost(stats.totalCost)}`;
@@ -64,49 +83,86 @@ export function setPruneStatusWidget(
     ctx.ui.setStatus(STATUS_WIDGET_ID, undefined);
     return;
   }
-  ctx.ui.setStatus(STATUS_WIDGET_ID, typeof value === "string" ? value : pruneStatusText(config, value));
+  ctx.ui.setStatus(
+    STATUS_WIDGET_ID,
+    typeof value === "string" ? value : pruneStatusText(config, value),
+  );
 }
 
 // ── Subcommand list (for completions & interactive picker) ──────────────────
 
 const SUBCOMMANDS = [
   { value: "settings", label: "settings  — interactive settings overlay" },
-  { value: "on",       label: "on        — enable context pruning" },
-  { value: "off",      label: "off       — disable context pruning" },
-  { value: "status",  label: "status    — show status, model, thinking, prune trigger, and status line" },
-  { value: "model",   label: "model     — show or set the summarizer model" },
-  { value: "thinking", label: "thinking  — show or set the summarizer thinking level" },
+  { value: "on", label: "on        — enable context pruning" },
+  { value: "off", label: "off       — disable context pruning" },
+  {
+    value: "status",
+    label:
+      "status    — show status, model, thinking, prune trigger, and status line",
+  },
+  { value: "model", label: "model     — show or set the summarizer model" },
+  {
+    value: "thinking",
+    label: "thinking  — show or set the summarizer thinking level",
+  },
   { value: "prune-on", label: "prune-on  — show or set the trigger mode" },
-  { value: "batching", label: "batching  — show or set the batching mode (turn / agent-message)" },
-  { value: "stats",   label: "stats     — show cumulative summarizer token/cost stats" },
-  { value: "tree",    label: "tree      — browse pruned tool calls in a foldable tree" },
-  { value: "now",     label: "now       — flush pending tool calls immediately (widget progress)" },
-  { value: "help",    label: "help      — show this help" },
+  {
+    value: "batching",
+    label: "batching  — show or set the batching mode (turn / agent-message)",
+  },
+  {
+    value: "stats",
+    label: "stats     — show cumulative summarizer token/cost stats",
+  },
+  {
+    value: "tree",
+    label: "tree      — browse pruned tool calls in a foldable tree",
+  },
+  {
+    value: "now",
+    label: "now       — flush pending tool calls immediately (widget progress)",
+  },
+  { value: "help", label: "help      — show this help" },
 ] as const;
 
 // ── Help text ───────────────────────────────────────────────────────────────
 
 const PRUNE_MODE_GUIDANCE: Record<ContextPruneConfig["pruneOn"], string> = {
-  "every-turn": "Debugging only. Prunes after every tool turn, which is easiest to inspect but churns provider prompt caches the most.",
-  "on-context-tag": "Good for milestone-based workflows. Flushes when context_checkpoint (legacy: context_tag) is called; requires the pi-context extension for automatic triggering.",
-  "on-demand": "Maximum manual control. Nothing is pruned until you run /pruner now, so cache invalidation happens only when you choose.",
-  "agent-message": "Recommended default. Batches tool work and prunes once after the final text reply, giving the best balance of automation, context savings, and cache stability.",
-  "agentic-auto": "Useful for longer autonomous runs. Lets the model call context_prune, but depends on the model using it sparingly.",
+  "every-turn":
+    "Debugging only. Prunes after every tool turn, which is easiest to inspect but churns provider prompt caches the most.",
+  "on-context-tag":
+    "Good for milestone-based workflows. Flushes when context_checkpoint (legacy: context_tag) is called; requires the pi-context extension for automatic triggering.",
+  "on-demand":
+    "Maximum manual control. Nothing is pruned until you run /pruner now, so cache invalidation happens only when you choose.",
+  "agent-message":
+    "Recommended default. Batches tool work and prunes once after the final text reply, giving the best balance of automation, context savings, and cache stability.",
+  "agentic-auto":
+    "Useful for longer autonomous runs. Lets the model call context_prune, but depends on the model using it sparingly.",
 };
 
 function pruneModeGuidance(mode: ContextPruneConfig["pruneOn"]): string {
-  return PRUNE_MODE_GUIDANCE[mode] ?? "Controls when summarized tool outputs replace raw tool results in future context.";
+  return (
+    PRUNE_MODE_GUIDANCE[mode] ??
+    "Controls when summarized tool outputs replace raw tool results in future context."
+  );
 }
 
 function pruneModeLabel(mode: ContextPruneConfig["pruneOn"]): string {
   return PRUNE_ON_MODES.find((entry) => entry.value === mode)?.label ?? mode;
 }
 
-function summarizerThinkingLabel(level: ContextPruneConfig["summarizerThinking"]): string {
-  return SUMMARIZER_THINKING_LEVELS.find((entry) => entry.value === level)?.label ?? level;
+function summarizerThinkingLabel(
+  level: ContextPruneConfig["summarizerThinking"],
+): string {
+  return (
+    SUMMARIZER_THINKING_LEVELS.find((entry) => entry.value === level)?.label ??
+    level
+  );
 }
 
-function summarizerThinkingDescription(level: ContextPruneConfig["summarizerThinking"]): string {
+function summarizerThinkingDescription(
+  level: ContextPruneConfig["summarizerThinking"],
+): string {
   if (level === "default") {
     return "Preserve old behavior: send no explicit thinking option for summarizer calls.";
   }
@@ -116,9 +172,11 @@ function summarizerThinkingDescription(level: ContextPruneConfig["summarizerThin
   return `Request ${level} thinking/reasoning for summarizer calls where supported.`;
 }
 
-function parseModelAndThinkingArg(
-  value: string,
-): { model: string; thinking?: ContextPruneConfig["summarizerThinking"]; error?: string } {
+function parseModelAndThinkingArg(value: string): {
+  model: string;
+  thinking?: ContextPruneConfig["summarizerThinking"];
+  error?: string;
+} {
   const separatorIndex = value.lastIndexOf(":");
   if (separatorIndex === -1) {
     return { model: value };
@@ -126,7 +184,9 @@ function parseModelAndThinkingArg(
 
   const model = value.slice(0, separatorIndex);
   const suffix = value.slice(separatorIndex + 1);
-  const thinking = SUMMARIZER_THINKING_LEVELS.find((level) => level.value === suffix)?.value;
+  const thinking = SUMMARIZER_THINKING_LEVELS.find(
+    (level) => level.value === suffix,
+  )?.value;
   if (!model || !thinking) {
     return {
       model: value,
@@ -144,7 +204,9 @@ function batchingModeLabel(mode: ContextPruneConfig["batchingMode"]): string {
   return BATCHING_MODES.find((m) => m.value === mode)?.label ?? mode;
 }
 
-function batchingModeDescription(mode: ContextPruneConfig["batchingMode"]): string {
+function batchingModeDescription(
+  mode: ContextPruneConfig["batchingMode"],
+): string {
   if (mode === "turn") {
     return "Per turn (default): one summary per assistant turn. Keeps summaries small and granular.";
   }
@@ -231,7 +293,18 @@ Settings are saved to ~/.pi/agent/context-prune/settings.json`;
 
 // ── Pruner progress widget ────────────────────────────────────────────────────
 
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+const SPINNER_FRAMES = [
+  "⠋",
+  "⠙",
+  "⠹",
+  "⠸",
+  "⠼",
+  "⠴",
+  "⠦",
+  "⠧",
+  "⠇",
+  "⠏",
+] as const;
 const SPINNER_INTERVAL_MS = 120;
 
 type RowStatus = "pending" | "running" | "done" | "skipped";
@@ -312,7 +385,11 @@ function startPrunerWidget(
           return rows.map((row) => {
             const count = `${row.toolCallCount} tool call${row.toolCallCount === 1 ? "" : "s"}`;
             if (row.status === "running") {
-              const frame = SPINNER_FRAMES[Math.floor(Date.now() / SPINNER_INTERVAL_MS) % SPINNER_FRAMES.length];
+              const frame =
+                SPINNER_FRAMES[
+                  Math.floor(Date.now() / SPINNER_INTERVAL_MS) %
+                    SPINNER_FRAMES.length
+                ];
               const chars =
                 row.receivedChars > 0
                   ? ` · ${formatCharProgress(row.receivedChars, row.rawChars)}`
@@ -353,8 +430,18 @@ function startPrunerWidget(
 export function registerCommands(
   pi: ExtensionAPI,
   currentConfig: { value: ContextPruneConfig },
-  flushPending: (ctx: ExtensionCommandContext, options?: FlushOptions) => Promise<
-    | { ok: true; reason: "flushed" | "skipped-oversized"; batchCount: number; toolCallCount: number; rawCharCount: number; summaryCharCount: number }
+  flushPending: (
+    ctx: ExtensionCommandContext,
+    options?: FlushOptions,
+  ) => Promise<
+    | {
+        ok: true;
+        reason: "flushed" | "skipped-oversized";
+        batchCount: number;
+        toolCallCount: number;
+        rawCharCount: number;
+        summaryCharCount: number;
+      }
     | { ok: false; reason: string; error?: string }
   >,
   capturePendingBatches: (ctx: ExtensionCommandContext) => CapturedBatch[],
@@ -377,7 +464,10 @@ export function registerCommands(
       // ── Bare /pruner → interactive picker ──
       if (!subcommand) {
         const options = SUBCOMMANDS.map((s) => s.label);
-        const choice = await ctx.ui.select("pruner — choose a subcommand", options);
+        const choice = await ctx.ui.select(
+          "pruner — choose a subcommand",
+          options,
+        );
         if (!choice) return;
         // Extract the value (first word) from the label like "settings — interactive settings overlay"
         subcommand = choice.split(/\s+/)[0];
@@ -423,15 +513,20 @@ export function registerCommands(
               label: "Summarizer model",
               values: [config.summarizerModel], // show current value as the cycling option
               currentValue: config.summarizerModel,
-              description: "Model used for summarizing tool outputs — press Enter to browse models",
-              submenu: (currentValue: string, done: (newValue?: string) => void) => {
+              description:
+                "Model used for summarizing tool outputs — press Enter to browse models",
+              submenu: (
+                currentValue: string,
+                done: (newValue?: string) => void,
+              ) => {
                 const modelItems: SettingItem[] = [
                   {
                     id: "default",
                     label: "default (active model)",
                     values: ["default"],
                     currentValue: currentValue === "default" ? "default" : "",
-                    description: "Use the currently active model for summarization",
+                    description:
+                      "Use the currently active model for summarization",
                   },
                   ...availableModels.map((m) => {
                     const displayId = `${m.provider}/${m.id}`;
@@ -459,7 +554,9 @@ export function registerCommands(
               label: "Summarizer thinking",
               values: SUMMARIZER_THINKING_LEVELS.map((level) => level.value),
               currentValue: config.summarizerThinking,
-              description: summarizerThinkingDescription(config.summarizerThinking),
+              description: summarizerThinkingDescription(
+                config.summarizerThinking,
+              ),
             },
             {
               id: "remindUnprunedCount",
@@ -480,7 +577,8 @@ export function registerCommands(
               label: "Eager background mode",
               values: ["true", "false"],
               currentValue: String(config.eager),
-              description: "Speculatively summarize turns in background so pruning latency is near-zero",
+              description:
+                "Speculatively summarize turns in background so pruning latency is near-zero",
             },
           ];
 
@@ -493,49 +591,79 @@ export function registerCommands(
               newConfig.enabled = newValue === "true";
             } else if (id === "showPruneStatusLine") {
               newConfig.showPruneStatusLine = newValue === "true";
-              const statusLineItem = items.find((item) => item.id === "showPruneStatusLine");
+              const statusLineItem = items.find(
+                (item) => item.id === "showPruneStatusLine",
+              );
               if (statusLineItem) {
-                statusLineItem.description = pruneStatusLineDescription(newConfig);
+                statusLineItem.description =
+                  pruneStatusLineDescription(newConfig);
               }
             } else if (id === "showStartupNotice") {
               newConfig.showStartupNotice = newValue === "true";
-              const startupNoticeItem = items.find((item) => item.id === "showStartupNotice");
+              const startupNoticeItem = items.find(
+                (item) => item.id === "showStartupNotice",
+              );
               if (startupNoticeItem) {
-                startupNoticeItem.description = startupNoticeDescription(newConfig);
+                startupNoticeItem.description =
+                  startupNoticeDescription(newConfig);
               }
             } else if (id === "pruneOn") {
               newConfig.pruneOn = newValue as ContextPruneConfig["pruneOn"];
-              const pruneTriggerItem = items.find((item) => item.id === "pruneOn");
+              const pruneTriggerItem = items.find(
+                (item) => item.id === "pruneOn",
+              );
               if (pruneTriggerItem) {
-                pruneTriggerItem.description = pruneTriggerDescription(newConfig.pruneOn);
+                pruneTriggerItem.description = pruneTriggerDescription(
+                  newConfig.pruneOn,
+                );
               }
-              const remindItem = items.find((item) => item.id === "remindUnprunedCount");
+              const remindItem = items.find(
+                (item) => item.id === "remindUnprunedCount",
+              );
               if (remindItem) {
-                remindItem.description = remindUnprunedCountDescription(newConfig);
+                remindItem.description =
+                  remindUnprunedCountDescription(newConfig);
               }
             } else if (id === "summarizerModel") {
               newConfig.summarizerModel = newValue;
             } else if (id === "summarizerThinking") {
-              newConfig.summarizerThinking = newValue as ContextPruneConfig["summarizerThinking"];
-              const thinkingItem = items.find((item) => item.id === "summarizerThinking");
+              newConfig.summarizerThinking =
+                newValue as ContextPruneConfig["summarizerThinking"];
+              const thinkingItem = items.find(
+                (item) => item.id === "summarizerThinking",
+              );
               if (thinkingItem) {
-                thinkingItem.description = summarizerThinkingDescription(newConfig.summarizerThinking);
+                thinkingItem.description = summarizerThinkingDescription(
+                  newConfig.summarizerThinking,
+                );
               }
             } else if (id === "remindUnprunedCount") {
               newConfig.remindUnprunedCount = newValue === "true";
-              const remindItem = items.find((item) => item.id === "remindUnprunedCount");
+              const remindItem = items.find(
+                (item) => item.id === "remindUnprunedCount",
+              );
               if (remindItem) {
-                remindItem.description = remindUnprunedCountDescription(newConfig);
+                remindItem.description =
+                  remindUnprunedCountDescription(newConfig);
               }
-              const pruneTriggerItem = items.find((item) => item.id === "pruneOn");
+              const pruneTriggerItem = items.find(
+                (item) => item.id === "pruneOn",
+              );
               if (pruneTriggerItem) {
-                pruneTriggerItem.description = pruneTriggerDescription(newConfig.pruneOn);
+                pruneTriggerItem.description = pruneTriggerDescription(
+                  newConfig.pruneOn,
+                );
               }
             } else if (id === "batchingMode") {
-              newConfig.batchingMode = newValue as ContextPruneConfig["batchingMode"];
-              const batchingItem = items.find((item) => item.id === "batchingMode");
+              newConfig.batchingMode =
+                newValue as ContextPruneConfig["batchingMode"];
+              const batchingItem = items.find(
+                (item) => item.id === "batchingMode",
+              );
               if (batchingItem) {
-                batchingItem.description = batchingModeDescription(newConfig.batchingMode);
+                batchingItem.description = batchingModeDescription(
+                  newConfig.batchingMode,
+                );
               }
             } else if (id === "eager") {
               newConfig.eager = newValue === "true";
@@ -597,11 +725,14 @@ export function registerCommands(
         // ── /pruner status ──
         case "status": {
           const cfg = currentConfig.value;
-          const mode = PRUNE_ON_MODES.find((m) => m.value === cfg.pruneOn)?.label ?? cfg.pruneOn;
+          const mode =
+            PRUNE_ON_MODES.find((m) => m.value === cfg.pruneOn)?.label ??
+            cfg.pruneOn;
           const s = getStats();
-          const statsLine = s.callCount > 0
-            ? `\n  --- summarizer ---\n  calls:       ${s.callCount}\n  input:       ${formatTokens(s.totalInputTokens)} tokens\n  output:      ${formatTokens(s.totalOutputTokens)} tokens\n  cost:        ${formatCost(s.totalCost)}`
-            : "\n  (no summarizer calls yet)";
+          const statsLine =
+            s.callCount > 0
+              ? `\n  --- summarizer ---\n  calls:       ${s.callCount}\n  input:       ${formatTokens(s.totalInputTokens)} tokens\n  output:      ${formatTokens(s.totalOutputTokens)} tokens\n  cost:        ${formatCost(s.totalCost)}`
+              : "\n  (no summarizer calls yet)";
           ctx.ui.notify(
             `pruner status:\n  enabled:  ${cfg.enabled}\n  model:    ${cfg.summarizerModel}\n  thinking: ${summarizerThinkingLabel(cfg.summarizerThinking)} (${cfg.summarizerThinking})\n  trigger:  ${mode}\n  batching: ${batchingModeLabel(cfg.batchingMode)} (${cfg.batchingMode})\n  status:   ${cfg.showPruneStatusLine ? "on" : "off"}\n  startup:  ${cfg.showStartupNotice ? "on" : "off"}\n  remind:   ${cfg.remindUnprunedCount ? "on" : "off"} (agentic-auto only)${statsLine}`,
           );
@@ -612,18 +743,27 @@ export function registerCommands(
         case "tree": {
           const roots = buildPruneTree(ctx, indexer);
           if (roots.length === 0) {
-            ctx.ui.notify("No pruned tool calls found in this session.", "info");
+            ctx.ui.notify(
+              "No pruned tool calls found in this session.",
+              "info",
+            );
             break;
           }
 
           await ctx.ui.custom(
             (_tui, theme, _keybindings, done) => {
-              const browser = new TreeBrowser(roots, theme, () => done(undefined));
+              const browser = new TreeBrowser(roots, theme, () =>
+                done(undefined),
+              );
               return browser;
             },
             {
               overlay: true,
-              overlayOptions: { width: "80%", maxHeight: "70%", anchor: "center" },
+              overlayOptions: {
+                width: "80%",
+                maxHeight: "70%",
+                anchor: "center",
+              },
             },
           );
           break;
@@ -658,11 +798,16 @@ export function registerCommands(
             currentConfig.value = {
               ...currentConfig.value,
               summarizerModel: parsed.model,
-              summarizerThinking: parsed.thinking ?? currentConfig.value.summarizerThinking,
+              summarizerThinking:
+                parsed.thinking ?? currentConfig.value.summarizerThinking,
             };
             saveConfig(currentConfig.value);
-            const thinkingText = parsed.thinking ? ` with thinking ${parsed.thinking}` : "";
-            ctx.ui.notify(`Summarizer model set to: ${parsed.model}${thinkingText}`);
+            const thinkingText = parsed.thinking
+              ? ` with thinking ${parsed.thinking}`
+              : "";
+            ctx.ui.notify(
+              `Summarizer model set to: ${parsed.model}${thinkingText}`,
+            );
           }
           break;
         }
@@ -676,10 +821,15 @@ export function registerCommands(
             );
             return;
           }
-          if (SUMMARIZER_THINKING_LEVELS.some((level) => level.value === thinkingArg)) {
+          if (
+            SUMMARIZER_THINKING_LEVELS.some(
+              (level) => level.value === thinkingArg,
+            )
+          ) {
             currentConfig.value = {
               ...currentConfig.value,
-              summarizerThinking: thinkingArg as ContextPruneConfig["summarizerThinking"],
+              summarizerThinking:
+                thinkingArg as ContextPruneConfig["summarizerThinking"],
             };
           } else {
             ctx.ui.notify(
@@ -689,7 +839,9 @@ export function registerCommands(
             return;
           }
           saveConfig(currentConfig.value);
-          ctx.ui.notify(`Summarizer thinking set to: ${currentConfig.value.summarizerThinking}`);
+          ctx.ui.notify(
+            `Summarizer thinking set to: ${currentConfig.value.summarizerThinking}`,
+          );
           break;
         }
 
@@ -697,14 +849,27 @@ export function registerCommands(
         case "prune-on": {
           const modeArg = subArgs[0];
           if (!modeArg) {
-            const options = PRUNE_ON_MODES.map((m) => `${m.value} — ${m.label}`);
-            const choice = await ctx.ui.select("pruner — choose when to trigger summarization", options);
+            const options = PRUNE_ON_MODES.map(
+              (m) => `${m.value} — ${m.label}`,
+            );
+            const choice = await ctx.ui.select(
+              "pruner — choose when to trigger summarization",
+              options,
+            );
             if (!choice) return;
             // Extract the value (first word) from "every-turn — Every turn"
-            const chosenValue = choice.split(/\s+/)[0] as ContextPruneConfig["pruneOn"];
-            currentConfig.value = { ...currentConfig.value, pruneOn: chosenValue };
+            const chosenValue = choice.split(
+              /\s+/,
+            )[0] as ContextPruneConfig["pruneOn"];
+            currentConfig.value = {
+              ...currentConfig.value,
+              pruneOn: chosenValue,
+            };
           } else {
-            currentConfig.value = { ...currentConfig.value, pruneOn: modeArg as ContextPruneConfig["pruneOn"] };
+            currentConfig.value = {
+              ...currentConfig.value,
+              pruneOn: modeArg as ContextPruneConfig["pruneOn"],
+            };
           }
           saveConfig(currentConfig.value);
           setPruneStatusWidget(ctx, currentConfig.value, getStats());
@@ -716,11 +881,21 @@ export function registerCommands(
         case "batching": {
           const batchArg = subArgs[0];
           if (!batchArg) {
-            const options = BATCHING_MODES.map((m) => `${m.value} — ${m.label}`);
-            const choice = await ctx.ui.select("pruner — choose batching granularity", options);
+            const options = BATCHING_MODES.map(
+              (m) => `${m.value} — ${m.label}`,
+            );
+            const choice = await ctx.ui.select(
+              "pruner — choose batching granularity",
+              options,
+            );
             if (!choice) return;
-            const chosenValue = choice.split(/\s+/)[0] as ContextPruneConfig["batchingMode"];
-            currentConfig.value = { ...currentConfig.value, batchingMode: chosenValue };
+            const chosenValue = choice.split(
+              /\s+/,
+            )[0] as ContextPruneConfig["batchingMode"];
+            currentConfig.value = {
+              ...currentConfig.value,
+              batchingMode: chosenValue,
+            };
           } else {
             if (!BATCHING_MODES.some((m) => m.value === batchArg)) {
               ctx.ui.notify(
@@ -729,24 +904,35 @@ export function registerCommands(
               );
               return;
             }
-            currentConfig.value = { ...currentConfig.value, batchingMode: batchArg as ContextPruneConfig["batchingMode"] };
+            currentConfig.value = {
+              ...currentConfig.value,
+              batchingMode: batchArg as ContextPruneConfig["batchingMode"],
+            };
           }
           saveConfig(currentConfig.value);
-          ctx.ui.notify(`Batching mode set to: ${batchingModeLabel(currentConfig.value.batchingMode)}`);
+          ctx.ui.notify(
+            `Batching mode set to: ${batchingModeLabel(currentConfig.value.batchingMode)}`,
+          );
           break;
         }
 
         // ── /pruner now ──
         case "now": {
           if (!currentConfig.value.enabled) {
-            ctx.ui.notify("Context pruning is disabled. Run /pruner on first.", "warning");
+            ctx.ui.notify(
+              "Context pruning is disabled. Run /pruner on first.",
+              "warning",
+            );
             return;
           }
 
           // Capture the pending queue first so we can pre-build the widget rows.
           const batches = capturePendingBatches(ctx);
           if (batches.length === 0) {
-            ctx.ui.notify("pruner: nothing pending — no batches to summarize", "info");
+            ctx.ui.notify(
+              "pruner: nothing pending — no batches to summarize",
+              "info",
+            );
             break;
           }
 
@@ -774,8 +960,12 @@ export function registerCommands(
           setPruneStatusWidget(ctx, currentConfig.value, getStats());
 
           if (!result.ok) {
-            const suffix = "error" in result && result.error ? ` (${result.error})` : "";
-            ctx.ui.notify(`pruner: nothing flushed — ${result.reason}${suffix}`, result.reason === "empty" ? "info" : "warning");
+            const suffix =
+              "error" in result && result.error ? ` (${result.error})` : "";
+            ctx.ui.notify(
+              `pruner: nothing flushed — ${result.reason}${suffix}`,
+              result.reason === "empty" ? "info" : "warning",
+            );
             break;
           }
 
@@ -783,7 +973,7 @@ export function registerCommands(
             if (currentConfig.value.notifySkipped) {
               ctx.ui.notify(
                 `pruner: skipped pruning ${result.toolCallCount} tool call${result.toolCallCount === 1 ? "" : "s"} — summary was ${result.summaryCharCount} chars vs ${result.rawCharCount} raw chars; frontier advanced past this range`,
-                "warning"
+                "warning",
               );
             }
             break;
@@ -791,7 +981,7 @@ export function registerCommands(
 
           ctx.ui.notify(
             `pruner: pruned ${result.toolCallCount} tool call${result.toolCallCount === 1 ? "" : "s"} from ${result.batchCount} batch${result.batchCount === 1 ? "" : "es"} — summary ${result.summaryCharCount} chars vs ${result.rawCharCount} raw chars`,
-            "info"
+            "info",
           );
           break;
         }
@@ -811,19 +1001,29 @@ export function registerCommands(
   });
 
   // Register custom renderer for context-prune-summary messages
-  pi.registerMessageRenderer("context-prune-summary", (message, { expanded }, theme) => {
-    const details = message.details as {
-      toolCallRefs?: { shortId: string; toolCallId: string }[];
-      toolCallIds?: string[];
-      turnIndex: number;
-      toolNames: string[];
-    };
-    const turnIndex = details?.turnIndex ?? "?";
-    const toolCount = normalizeSummaryToolCallRefs(details).length;
-    const header = theme.fg("accent", `[pruner] Turn ${turnIndex} summary (${toolCount} tool${toolCount === 1 ? "" : "s"})`);
-    if (expanded) {
-      return new Text(header + "\n" + unwrapSummaryForDisplay(message.content), 0, 0);
-    }
-    return new Text(header, 0, 0);
-  });
+  pi.registerMessageRenderer(
+    "context-prune-summary",
+    (message, { expanded }, theme) => {
+      const details = message.details as {
+        toolCallRefs?: { shortId: string; toolCallId: string }[];
+        toolCallIds?: string[];
+        turnIndex: number;
+        toolNames: string[];
+      };
+      const turnIndex = details?.turnIndex ?? "?";
+      const toolCount = normalizeSummaryToolCallRefs(details).length;
+      const header = theme.fg(
+        "accent",
+        `[pruner] Turn ${turnIndex} summary (${toolCount} tool${toolCount === 1 ? "" : "s"})`,
+      );
+      if (expanded) {
+        return new Text(
+          header + "\n" + unwrapSummaryForDisplay(message.content),
+          0,
+          0,
+        );
+      }
+      return new Text(header, 0, 0);
+    },
+  );
 }

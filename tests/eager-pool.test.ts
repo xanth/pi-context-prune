@@ -4,7 +4,11 @@ import { EagerSummaryPool } from "../src/eager-pool.js";
 import type { CapturedBatch, ContextPruneConfig } from "../src/types.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 
-function makeBatch(turnIndex: number, toolName = "bash", text = "result output"): CapturedBatch {
+function makeBatch(
+  turnIndex: number,
+  toolName = "bash",
+  text = "result output",
+): CapturedBatch {
   return {
     turnIndex,
     timestamp: Date.now(),
@@ -21,11 +25,17 @@ function makeBatch(turnIndex: number, toolName = "bash", text = "result output")
   };
 }
 
-function makeMockCtx(streamHandler?: (batch: CapturedBatch) => Promise<string>) {
+function makeMockCtx(
+  streamHandler?: (batch: CapturedBatch) => Promise<string>,
+) {
   return {
     model: { provider: "mock", id: "mock-1" },
     modelRegistry: {
-      getApiKeyAndHeaders: async () => ({ ok: true, apiKey: "test", headers: {} }),
+      getApiKeyAndHeaders: async () => ({
+        ok: true,
+        apiKey: "test",
+        headers: {},
+      }),
       getProvider: () => ({
         stream: (_model: any, llmContext: any) => {
           const prompt = llmContext.messages[0]?.content?.[0]?.text ?? "";
@@ -40,7 +50,20 @@ function makeMockCtx(streamHandler?: (batch: CapturedBatch) => Promise<string>) 
               return {
                 content: [{ type: "text", text }],
                 stopReason: "stop",
-                usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+                usage: {
+                  input: 10,
+                  output: 5,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  totalTokens: 15,
+                  cost: {
+                    input: 0,
+                    output: 0,
+                    cacheRead: 0,
+                    cacheWrite: 0,
+                    total: 0,
+                  },
+                },
               };
             },
           };
@@ -90,7 +113,10 @@ describe("EagerSummaryPool", () => {
     assert.equal(results.length, 3);
     assert.ok(results.every((r) => r !== null && r.summaryText === "summary"));
     // Max concurrency must not exceed eagerConcurrency (2)
-    assert.ok(maxObservedConcurrent <= 2, `max concurrent was ${maxObservedConcurrent}, expected <= 2`);
+    assert.ok(
+      maxObservedConcurrent <= 2,
+      `max concurrent was ${maxObservedConcurrent}, expected <= 2`,
+    );
   });
 
   it("yields instant cache hits for batches already summarized in background", async () => {
@@ -124,8 +150,15 @@ describe("EagerSummaryPool", () => {
 
     assert.equal(results.length, 1);
     assert.equal(results[0]?.summaryText, "precomputed summary");
-    assert.equal(providerCalls, 1, "must not re-invoke provider for precomputed batch");
-    assert.ok(elapsed < 20, `drain took ${elapsed}ms, expected near 0ms cache hit`);
+    assert.equal(
+      providerCalls,
+      1,
+      "must not re-invoke provider for precomputed batch",
+    );
+    assert.ok(
+      elapsed < 20,
+      `drain took ${elapsed}ms, expected near 0ms cache hit`,
+    );
   });
 
   it("awaits in-flight background job rather than spawning duplicate calls", async () => {
@@ -166,7 +199,11 @@ describe("EagerSummaryPool", () => {
 
     assert.equal(results.length, 1);
     assert.equal(results[0]?.summaryText, "awaited in-flight summary");
-    assert.equal(providerCalls, 1, "in-flight job must be awaited without a duplicate call");
+    assert.equal(
+      providerCalls,
+      1,
+      "in-flight job must be awaited without a duplicate call",
+    );
   });
 
   it("cleans up committed batches on evict", async () => {

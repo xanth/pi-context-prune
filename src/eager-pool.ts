@@ -16,14 +16,8 @@ interface EagerJob {
 }
 
 /**
- * Manages non-blocking background summarization of captured batches.
- *
- * Runs speculative LLM summarization jobs in the background as turns complete,
- * so that when the agent or user triggers pruning, pre-computed summaries are
- * already waiting (or in flight), collapsing tool execution latency to near-zero.
- *
- * Speculative jobs are purely in-memory: they never touch the indexer, session
- * history, or frontier until flushPending formally commits them.
+ * Manages non-blocking speculative background summarization.
+ * Speculative jobs are in-memory only and never committed until flushPending runs.
  */
 export class EagerSummaryPool {
   private jobs = new Map<string, EagerJob>();
@@ -31,11 +25,14 @@ export class EagerSummaryPool {
 
   /**
    * Generates a stable key for a batch based on its tool call IDs.
-   * Tool call IDs are universally unique across the session, making the key
-   * immune to differences in 0-based vs 1-based turn index representations.
+   * Tool call IDs are unique across the session, making the key immune to
+   * differences in 0-based vs 1-based turn index representations.
    */
   private batchKey(batch: CapturedBatch): string {
-    const ids = batch.toolCalls.map((tc) => tc.toolCallId).filter(Boolean);
+    const ids = batch.toolCalls
+      .map((tc) => tc.toolCallId)
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
     if (ids.length > 0) {
       return ids.join(",");
     }
@@ -49,7 +46,7 @@ export class EagerSummaryPool {
   enqueue(
     batches: CapturedBatch[],
     config: ContextPruneConfig,
-    ctx: ExtensionContext
+    ctx: ExtensionContext,
   ): void {
     if (!config.enabled || !config.eager || config.batchingMode !== "turn") {
       return;
@@ -74,10 +71,13 @@ export class EagerSummaryPool {
     }
 
     // Only start speculative execution once the lag threshold is met.
-    const pendingJobs = Array.from(this.jobs.values()).filter(
-      (j) => j.status === "queued" || j.status === "running"
-    );
-    if (pendingJobs.length >= config.eagerMinPendingBatches) {
+    let eligibleCount = 0;
+    for (const j of this.jobs.values()) {
+      if (j.status === "queued" || j.status === "running") {
+        eligibleCount++;
+      }
+    }
+    if (eligibleCount >= config.eagerMinPendingBatches) {
       this.pump(config, ctx);
     }
   }
@@ -132,9 +132,9 @@ export class EagerSummaryPool {
         index: number,
         total: number,
         batch: CapturedBatch,
-        receivedChars: number
+        receivedChars: number,
       ) => void;
-    } = {}
+    } = {},
   ): Promise<Array<SummarizeResult | null>> {
     // If any batches need execution, ensure the queue is being pumped
     this.pump(config, ctx);
@@ -153,7 +153,7 @@ export class EagerSummaryPool {
             options.signal.addEventListener(
               "abort",
               () => job.abortController.abort(options.signal?.reason),
-              { once: true }
+              { once: true },
             );
           }
 
@@ -163,7 +163,7 @@ export class EagerSummaryPool {
               index,
               batches.length,
               batch,
-              res.summaryText.length
+              res.summaryText.length,
             );
             return res;
           }
@@ -179,11 +179,11 @@ export class EagerSummaryPool {
               index,
               batches.length,
               batch,
-              receivedChars
+              receivedChars,
             );
           },
         });
-      })
+      }),
     );
   }
 

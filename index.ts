@@ -279,10 +279,8 @@ export default function (pi: ExtensionAPI) {
         options.onBatchTextProgress?.(index, total, batch, receivedChars);
       };
 
-      // Summarize batches. When eager mode is enabled (and batchingMode is "turn"),
-      // background jobs started as turns completed are drained (instant hits or
-      // in-flight await). When onProgress is provided (/pruner now with overlay),
-      // we process sequentially so each row can be checked off. Otherwise parallel.
+      // When eager mode is active, drain pre-computed background summaries.
+      // With onProgress (/pruner now overlay), process sequentially. Otherwise parallel.
       let results: (import("./src/types.js").SummarizeResult | null)[];
       if (
         currentConfig.value.eager &&
@@ -342,9 +340,7 @@ export default function (pi: ExtensionAPI) {
       let totalToolCallCount = 0;
       const oversizedBatches: CapturedBatch[] = [];
       let firstFailureIndex = -1;
-      // Runtime delivery defers every summary to ONE steer message sent after the
-      // loop (see the coalesced send below). Session delivery persists each
-      // summary as it goes, as before.
+      // Runtime delivery coalesces summaries into a single steer message after the loop.
       const runtimeSummaryParts: {
         summaryText: string;
         batch: CapturedBatch;
@@ -419,17 +415,8 @@ export default function (pi: ExtensionAPI) {
         restoreBatches(batches.slice(firstFailureIndex));
       }
 
-      // Runtime delivery: send ALL batch summaries of this flush as ONE steer
-      // message. Pi drains its steer queue one message at a time and starts a new
-      // agent turn per drained message, so one steer message per batch makes every
-      // batch summary trigger its own no-input turn — each burning an LLM call —
-      // after the agent has already produced its final message. A single coalesced
-      // message lands all summaries in the LLM call that the pending tool result
-      // requires anyway (runtime flushes only happen mid-run, while the agent must
-      // still respond to a tool call), so no extra turns are started. Summaries
-      // still reach every subsequent turn, user- or extension-triggered: the agent
-      // loop drains the steer queue at each turn boundary, and when pi is idle a
-      // steer-delivered message is appended straight into the session.
+      // Send all summaries as a single steer message to avoid extra no-input turns
+      // caused by one-at-a-time steer queue draining.
       if (delivery === "runtime" && runtimeSummaryParts.length > 0) {
         try {
           pi.sendMessage(

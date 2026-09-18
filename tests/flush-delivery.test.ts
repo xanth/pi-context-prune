@@ -487,9 +487,16 @@ describe("runtime delivery (context_prune tool)", () => {
         {
           message: {
             role: "assistant",
-            content: [{ type: "toolCall", id: tc.id, name: tc.name, arguments: {} }],
+            content: [
+              { type: "toolCall", id: tc.id, name: tc.name, arguments: {} },
+            ],
           },
-          toolResults: [{ toolCallId: tc.id, content: [{ type: "text", text: tc.resultText }] }],
+          toolResults: [
+            {
+              toolCallId: tc.id,
+              content: [{ type: "text", text: tc.resultText }],
+            },
+          ],
           turnIndex: i + 1,
         },
         harness.ctx,
@@ -498,13 +505,21 @@ describe("runtime delivery (context_prune tool)", () => {
 
     // Wait slightly for eager background jobs to finish
     await new Promise((r) => setTimeout(r, 60));
-    assert.equal(providerCallCount, 2, "both batches should be eagerly summarized in background");
+    assert.equal(
+      providerCallCount,
+      2,
+      "both batches should be eagerly summarized in background",
+    );
 
     // Calling context_prune should drain pre-computed summaries with 0 new provider calls
     const result = await runPruneTool(harness);
     assert.equal(result.details.ok, true);
     assert.equal(result.details.reason, "flushed");
-    assert.equal(providerCallCount, 2, "no additional provider calls during flush");
+    assert.equal(
+      providerCallCount,
+      2,
+      "no additional provider calls during flush",
+    );
   });
 });
 

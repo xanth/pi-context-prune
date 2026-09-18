@@ -1,18 +1,38 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import type { ContextPruneConfig, PruneOn, SummarizerThinking } from "./types.js";
-import { DEFAULT_CONFIG, PRUNE_ON_MODES, SUMMARIZER_THINKING_LEVELS } from "./types.js";
+import type {
+  ContextPruneConfig,
+  PruneOn,
+  SummarizerThinking,
+} from "./types.js";
+import {
+  DEFAULT_CONFIG,
+  PRUNE_ON_MODES,
+  SUMMARIZER_THINKING_LEVELS,
+} from "./types.js";
 
 /** Path to the extension's own settings file, independent of any project. */
-export const SETTINGS_PATH = join(homedir(), ".pi", "agent", "context-prune", "settings.json");
+export const SETTINGS_PATH = join(
+  homedir(),
+  ".pi",
+  "agent",
+  "context-prune",
+  "settings.json",
+);
 
 function isPruneOn(value: unknown): value is PruneOn {
-  return typeof value === "string" && PRUNE_ON_MODES.some((mode) => mode.value === value);
+  return (
+    typeof value === "string" &&
+    PRUNE_ON_MODES.some((mode) => mode.value === value)
+  );
 }
 
 function isSummarizerThinking(value: unknown): value is SummarizerThinking {
-  return typeof value === "string" && SUMMARIZER_THINKING_LEVELS.some((level) => level.value === value);
+  return (
+    typeof value === "string" &&
+    SUMMARIZER_THINKING_LEVELS.some((level) => level.value === value)
+  );
 }
 
 /** Reads ~/.pi/agent/context-prune/settings.json and returns the config (or defaults). */
@@ -23,7 +43,10 @@ export async function loadConfig(): Promise<ContextPruneConfig> {
     const merged = { ...DEFAULT_CONFIG, ...existing };
     return {
       ...merged,
-      enabled: typeof merged.enabled === "boolean" ? merged.enabled : DEFAULT_CONFIG.enabled,
+      enabled:
+        typeof merged.enabled === "boolean"
+          ? merged.enabled
+          : DEFAULT_CONFIG.enabled,
       showPruneStatusLine:
         typeof merged.showPruneStatusLine === "boolean"
           ? merged.showPruneStatusLine
@@ -32,7 +55,9 @@ export async function loadConfig(): Promise<ContextPruneConfig> {
         typeof merged.showStartupNotice === "boolean"
           ? merged.showStartupNotice
           : DEFAULT_CONFIG.showStartupNotice,
-      pruneOn: isPruneOn(merged.pruneOn) ? merged.pruneOn : DEFAULT_CONFIG.pruneOn,
+      pruneOn: isPruneOn(merged.pruneOn)
+        ? merged.pruneOn
+        : DEFAULT_CONFIG.pruneOn,
       summarizerThinking: isSummarizerThinking(merged.summarizerThinking)
         ? merged.summarizerThinking
         : DEFAULT_CONFIG.summarizerThinking,
@@ -41,14 +66,19 @@ export async function loadConfig(): Promise<ContextPruneConfig> {
           ? merged.remindUnprunedCount
           : DEFAULT_CONFIG.remindUnprunedCount,
       notifySkipped:
-        typeof merged.notifySkipped === "boolean" ? merged.notifySkipped : DEFAULT_CONFIG.notifySkipped,
-      eager: typeof merged.eager === "boolean" ? merged.eager : DEFAULT_CONFIG.eager,
+        typeof merged.notifySkipped === "boolean"
+          ? merged.notifySkipped
+          : DEFAULT_CONFIG.notifySkipped,
+      eager:
+        typeof merged.eager === "boolean" ? merged.eager : DEFAULT_CONFIG.eager,
       eagerConcurrency:
-        typeof merged.eagerConcurrency === "number" && merged.eagerConcurrency > 0
+        typeof merged.eagerConcurrency === "number" &&
+        merged.eagerConcurrency > 0
           ? Math.floor(merged.eagerConcurrency)
           : DEFAULT_CONFIG.eagerConcurrency,
       eagerMinPendingBatches:
-        typeof merged.eagerMinPendingBatches === "number" && merged.eagerMinPendingBatches >= 0
+        typeof merged.eagerMinPendingBatches === "number" &&
+        merged.eagerMinPendingBatches >= 0
           ? Math.floor(merged.eagerMinPendingBatches)
           : DEFAULT_CONFIG.eagerMinPendingBatches,
     };

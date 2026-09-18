@@ -94,8 +94,7 @@ export async function summarizeBatch(
     options.maxChars ??
     batch.toolCalls.reduce((s, tc) => s + tc.resultText.length, 0);
 
-  // If raw context is completely empty (0 characters), any summary will exceed it.
-  // Short-circuit immediately without making an unnecessary LLM call.
+  // Empty raw context will always exceed; short-circuit without calling the LLM.
   if (maxChars <= 0) {
     return {
       summaryText: "",
