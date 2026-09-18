@@ -15,6 +15,11 @@ interface EagerJob {
   resolve: (res: SummarizeResult | null) => void;
 }
 
+export interface EagerPoolCallbacks {
+  onJobStart?: (batch: CapturedBatch) => void;
+  onJobComplete?: (batch: CapturedBatch, result: SummarizeResult | null) => void;
+}
+
 /**
  * Manages non-blocking speculative background summarization.
  * Speculative jobs are in-memory only and never committed until flushPending runs.
@@ -22,6 +27,8 @@ interface EagerJob {
 export class EagerSummaryPool {
   private jobs = new Map<string, EagerJob>();
   private activeCount = 0;
+
+  constructor(private readonly callbacks?: EagerPoolCallbacks) {}
 
   /**
    * Generates a stable key for a batch based on its tool call IDs.
@@ -96,6 +103,7 @@ export class EagerSummaryPool {
 
       this.activeCount++;
       job.status = "running";
+      this.callbacks?.onJobStart?.(job.batch);
 
       (async () => {
         try {
@@ -111,6 +119,7 @@ export class EagerSummaryPool {
           job.resolve(null);
         } finally {
           this.activeCount--;
+          this.callbacks?.onJobComplete?.(job.batch, job.result ?? null);
           this.pump(config, ctx);
         }
       })();

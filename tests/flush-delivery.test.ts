@@ -14,6 +14,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { before, after, describe, it } from "node:test";
+import { pruneStatusText } from "../src/commands.js";
+import { DEFAULT_CONFIG } from "../src/types.js";
 
 // ── Config isolation ────────────────────────────────────────────────────────
 // config.ts resolves ~/.pi/agent/context-prune/settings.json at import time
@@ -207,8 +209,9 @@ const toolResultMessage = (tc: {
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
-describe("runtime delivery (context_prune tool)", () => {
-  before(() => writeSettings("agentic-auto"));
+describe("flush delivery", { concurrency: 1 }, () => {
+  describe("runtime delivery (context_prune tool)", { concurrency: 1 }, () => {
+    before(() => writeSettings("agentic-auto"));
 
   it("sends ONE coalesced steer message for a multi-batch flush", async () => {
     sendMessageBehavior = undefined;
@@ -521,9 +524,50 @@ describe("runtime delivery (context_prune tool)", () => {
       "no additional provider calls during flush",
     );
   });
+
+  it("formats status line showing pending count and live eager stats", () => {
+    const config: ContextPruneConfig = {
+      ...DEFAULT_CONFIG,
+      enabled: true,
+      eager: true,
+      pruneOn: "agentic-auto",
+    };
+
+    assert.equal(
+      pruneStatusText(config, {
+        pendingCount: 0,
+        eagerStats: { queued: 0, running: 0, done: 0, failed: 0 },
+      }),
+      "prune: 0 pending",
+    );
+
+    assert.equal(
+      pruneStatusText(config, {
+        pendingCount: 2,
+        eagerStats: { queued: 1, running: 1, done: 0, failed: 0 },
+      }),
+      "prune: 2 pending (1 eager running)",
+    );
+
+    assert.equal(
+      pruneStatusText(config, {
+        pendingCount: 3,
+        eagerStats: { queued: 0, running: 1, done: 2, failed: 0 },
+      }),
+      "prune: 3 pending (1 eager running, 2 ready)",
+    );
+
+    assert.equal(
+      pruneStatusText(config, {
+        pendingCount: 2,
+        eagerStats: { queued: 0, running: 0, done: 2, failed: 0 },
+      }),
+      "prune: 2 pending (2 ready)",
+    );
+  });
 });
 
-describe("session delivery (agent-message mode)", () => {
+describe("session delivery (agent-message mode)", { concurrency: 1 }, () => {
   it("appends one summary message per batch and sends no steer messages", async () => {
     sendMessageBehavior = undefined;
     writeSettings("agent-message");
@@ -589,4 +633,5 @@ describe("session delivery (agent-message mode)", () => {
       0,
     );
   });
+});
 });

@@ -13,7 +13,10 @@
  * Usage:  pi -e .
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { loadConfig } from "./src/config.js";
 import {
   captureBatch,
@@ -73,8 +76,44 @@ export default function (pi: ExtensionAPI) {
   // Shared prune frontier — tracks the last completed prune attempt boundary
   const frontier = new PruneFrontierTracker();
 
+  let lastCtx: ExtensionContext | null = null;
+
+  const updateStatusWidget = (customMessage?: string) => {
+    if (!lastCtx) return;
+    if (customMessage) {
+      setPruneStatusWidget(lastCtx, currentConfig.value, customMessage);
+    } else {
+      setPruneStatusWidget(lastCtx, currentConfig.value, {
+        pendingCount: pendingBatches.length,
+        eagerStats: eagerPool.stats(),
+        stats: statsAccum.getStats(),
+      });
+    }
+  };
+
   // Shared eager summary pool — manages non-blocking speculative background summarization
-  const eagerPool = new EagerSummaryPool();
+  const eagerPool = new EagerSummaryPool({
+    onJobStart: (batch) => {
+      updateStatusWidget();
+      if (currentConfig.value.showPruneStatusLine && lastCtx) {
+        safeNotify(
+          lastCtx,
+          `pruner: eager background summarization started for turn ${batch.turnIndex}`,
+          "info",
+        );
+      }
+    },
+    onJobComplete: (batch, res) => {
+      updateStatusWidget();
+      if (res && currentConfig.value.showPruneStatusLine && lastCtx) {
+        safeNotify(
+          lastCtx,
+          `pruner: eager summary ready for turn ${batch.turnIndex} (${res.summaryText.length} chars)`,
+          "info",
+        );
+      }
+    },
+  });
 
   // Pending batches — accumulated until the prune trigger fires
   const pendingBatches: CapturedBatch[] = [];
@@ -267,8 +306,9 @@ export default function (pi: ExtensionAPI) {
         details,
       );
 
+    lastCtx = ctx;
     try {
-      setPruneStatusWidget(ctx, currentConfig.value, "prune: summarizing…");
+      updateStatusWidget("prune: summarizing…");
 
       const reportBatchTextProgress = (
         index: number,
@@ -528,6 +568,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       eagerPool.evict(processedBatches);
+      updateStatusWidget();
 
       return {
         ok: true,
@@ -542,7 +583,7 @@ export default function (pi: ExtensionAPI) {
       // When the abort signal fired, summarizeBatch rethrows rather than
       // swallowing the error.  Don't show a UI error — the user intended this.
       if (options.signal?.aborted) {
-        setPruneStatusWidget(ctx, currentConfig.value, statsAccum.getStats());
+        updateStatusWidget();
         return { ok: false, reason: "aborted" };
       }
       if (isStaleContextError(err)) {
@@ -553,6 +594,7 @@ export default function (pi: ExtensionAPI) {
         `pruner: summarization failed: ${errorMessage(err)}`,
         "error",
       );
+      updateStatusWidget();
       return { ok: false, reason: "failed", error: errorMessage(err) };
     } finally {
       isFlushing = false;
@@ -596,8 +638,9 @@ export default function (pi: ExtensionAPI) {
     pendingBatches.length = 0;
     eagerPool.abortAll();
 
+    lastCtx = ctx;
     // Update footer status
-    setPruneStatusWidget(ctx, currentConfig.value, statsAccum.getStats());
+    updateStatusWidget();
 
     // Toggle context_prune tool activation for agentic-auto mode
     syncToolActivation();
@@ -622,6 +665,7 @@ export default function (pi: ExtensionAPI) {
 
   // ── turn_end: capture batch, flush immediately or queue ──────────────────
   pi.on("turn_end", async (event, ctx) => {
+    lastCtx = ctx;
     if (!currentConfig.value.enabled) return;
 
     const hasToolResults = event.toolResults && event.toolResults.length > 0;
@@ -674,13 +718,24 @@ export default function (pi: ExtensionAPI) {
           break;
       }
       if (currentConfig.value.showPruneStatusLine) {
-        setPruneStatusWidget(ctx, currentConfig.value, `prune: ${n} pending`);
-        safeNotify(
-          ctx,
-          `pruner: ${n} turn${n === 1 ? "" : "s"} queued — will summarize on ${trigger}`,
-          "info",
-        );
+        if (
+          currentConfig.value.eager &&
+          currentConfig.value.batchingMode === "turn"
+        ) {
+          safeNotify(
+            ctx,
+            `pruner: turn ${batch.turnIndex} queued (${n} pending) — eager summarization triggered in background`,
+            "info",
+          );
+        } else {
+          safeNotify(
+            ctx,
+            `pruner: ${n} turn${n === 1 ? "" : "s"} queued — will summarize on ${trigger}`,
+            "info",
+          );
+        }
       }
+      updateStatusWidget();
     }
   });
 
@@ -709,13 +764,9 @@ export default function (pi: ExtensionAPI) {
   // agent-message normally flushes on message_end. By agent_end, print-mode Pi may
   // already be disposing the session, so avoid starting a best-effort LLM call here.
   pi.on("agent_end", async (_event, ctx) => {
+    lastCtx = ctx;
     if (!currentConfig.value.enabled) return;
-    if (pendingBatches.length === 0) return;
-    setPruneStatusWidget(
-      ctx,
-      currentConfig.value,
-      `prune: ${pendingBatches.length} pending`,
-    );
+    updateStatusWidget();
   });
 
   // ── context: prune summarized tool results from next LLM call ─────────────

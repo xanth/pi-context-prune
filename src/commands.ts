@@ -3,6 +3,7 @@ import {
   type SummarizerStats,
   type CapturedBatch,
   type FlushOptions,
+  type PruneStatusDetails,
   PRUNE_ON_MODES,
   BATCHING_MODES,
   STATUS_WIDGET_ID,
@@ -62,12 +63,41 @@ class SettingsOverlay extends Container {
 
 export function pruneStatusText(
   config: ContextPruneConfig,
-  stats?: SummarizerStats,
+  value?: SummarizerStats | PruneStatusDetails,
 ): string {
+  if (!config.enabled) {
+    return "prune: OFF";
+  }
+
   const mode =
     PRUNE_ON_MODES.find((m) => m.value === config.pruneOn)?.label ??
     config.pruneOn;
-  let text = `prune: ${config.enabled ? "ON" : "OFF"} (${mode}${config.eager ? ", eager" : ""})`;
+
+  const isDetails =
+    value &&
+    typeof value === "object" &&
+    ("pendingCount" in value || "eagerStats" in value || "stats" in value);
+
+  const details: PruneStatusDetails = isDetails
+    ? (value as PruneStatusDetails)
+    : { stats: value as SummarizerStats | undefined };
+
+  const pending = details.pendingCount ?? 0;
+  let text = `prune: ${pending} pending`;
+
+  if (config.eager && details.eagerStats) {
+    const { running, done } = details.eagerStats;
+    const parts: string[] = [];
+    if (running > 0) parts.push(`${running} eager running`);
+    if (done > 0) parts.push(`${done} ready`);
+    if (parts.length > 0) {
+      text += ` (${parts.join(", ")})`;
+    }
+  } else if (pending === 0) {
+    text = `prune: idle (${mode})`;
+  }
+
+  const stats = details.stats;
   if (stats && stats.callCount > 0) {
     text += ` │ ↑${formatTokens(stats.totalInputTokens)} ↓${formatTokens(stats.totalOutputTokens)} ${formatCost(stats.totalCost)}`;
   }
@@ -77,7 +107,7 @@ export function pruneStatusText(
 export function setPruneStatusWidget(
   ctx: { ui: { setStatus: (id: string, text?: string) => void } },
   config: ContextPruneConfig,
-  value?: SummarizerStats | string,
+  value?: SummarizerStats | PruneStatusDetails | string,
 ): void {
   if (!config.showPruneStatusLine) {
     ctx.ui.setStatus(STATUS_WIDGET_ID, undefined);

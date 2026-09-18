@@ -13,13 +13,11 @@ import {
 } from "./types.js";
 
 /** Path to the extension's own settings file, independent of any project. */
-export const SETTINGS_PATH = join(
-  homedir(),
-  ".pi",
-  "agent",
-  "context-prune",
-  "settings.json",
-);
+export function getSettingsPath(): string {
+  return join(homedir(), ".pi", "agent", "context-prune", "settings.json");
+}
+
+export const SETTINGS_PATH = getSettingsPath();
 
 function isPruneOn(value: unknown): value is PruneOn {
   return (
@@ -37,8 +35,9 @@ function isSummarizerThinking(value: unknown): value is SummarizerThinking {
 
 /** Reads ~/.pi/agent/context-prune/settings.json and returns the config (or defaults). */
 export async function loadConfig(): Promise<ContextPruneConfig> {
+  const settingsPath = getSettingsPath();
   try {
-    const raw = await readFile(SETTINGS_PATH, "utf-8");
+    const raw = await readFile(settingsPath, "utf-8");
     const existing = JSON.parse(raw);
     const merged = { ...DEFAULT_CONFIG, ...existing };
     return {
@@ -89,6 +88,7 @@ export async function loadConfig(): Promise<ContextPruneConfig> {
 
 /** Writes the full config to ~/.pi/agent/context-prune/settings.json. */
 export async function saveConfig(config: ContextPruneConfig): Promise<void> {
-  await mkdir(dirname(SETTINGS_PATH), { recursive: true });
-  await writeFile(SETTINGS_PATH, JSON.stringify(config, null, 2));
+  const settingsPath = getSettingsPath();
+  await mkdir(dirname(settingsPath), { recursive: true });
+  await writeFile(settingsPath, JSON.stringify(config, null, 2));
 }
